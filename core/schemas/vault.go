@@ -27,11 +27,11 @@ var VaultStoreHook func(ctx context.Context, path string, value *string) error
 // It is nil in OSS deployments; VaultPrefix() falls back to "bifrost".
 var VaultPrefixHook func() string
 
-// VaultStoreEnabled reports whether vault storage is available (i.e. VaultStoreHook
-// has been wired by enterprise startup). Use this to guard StoreOwnedVaultSecretVars
+// VaultStoreWriteEnabled reports whether vault write storage is available (i.e. VaultStoreHook
+// has been wired by enterprise startup). Use this to guard StoreOwnedVaultEnvVars
 // calls in BeforeSave hooks.
-func VaultStoreEnabled() bool {
-	return VaultStoreHook != nil
+func VaultStoreWriteEnabled() bool {
+	return VaultStoreHook != nil && VaultRemoveHook != nil
 }
 
 // VaultPrefix returns the configured vault path prefix, defaulting to "bifrost".
@@ -62,9 +62,18 @@ func LookupVault(ref string) (string, bool) {
 	return val, true
 }
 
+// VaultPathKeyer is implemented by GORM models that own vault secrets. The
+// global vault callback uses VaultPathKey() (together with the table name) to
+// build the base path for auto-store and auto-remove, so individual models do
+// not need to wire StoreOwnedVaultEnvVars / RemoveOwnedVaultEnvVars manually.
+type VaultPathKeyer interface {
+	VaultPathKey() string
+}
+
 var (
-	secretVarType    = reflect.TypeOf(SecretVar{})
-	secretVarPtrType = reflect.TypeOf((*SecretVar)(nil))
+	envVarType    = reflect.TypeOf(EnvVar{})
+	envVarPtrType = reflect.TypeOf((*EnvVar)(nil))
+	envVarMapType = reflect.TypeOf(map[string]EnvVar{})
 )
 
 // RemoveOwnedVaultSecretVars best-effort deletes the vault secret for every
@@ -84,6 +93,14 @@ func RemoveOwnedVaultSecretVars(ctx context.Context, ownedPrefix string, model i
 	rt := rv.Type()
 	for i := 0; i < rt.NumField(); i++ {
 		fv := rv.Field(i)
+		if fv.Type() == envVarMapType {
+			iter := fv.MapRange()
+			for iter.Next() {
+				e := iter.Value().Interface().(EnvVar)
+				removeOwnedVaultEnvVar(ctx, ownedPrefix, &e)
+			}
+			continue
+		}
 		var field *SecretVar
 		switch fv.Type() {
 		case secretVarType:
@@ -93,21 +110,28 @@ func RemoveOwnedVaultSecretVars(ctx context.Context, ownedPrefix string, model i
 				field = fv.Interface().(*SecretVar)
 			}
 		}
-		if field == nil || !field.IsFromVault() || field.VaultRef == "" {
-			continue
-		}
-		path := strings.TrimPrefix(field.VaultRef, "vault.")
-		if strings.IndexByte(path, '#') >= 0 {
-			continue
-		}
-		if !strings.HasPrefix(path, ownedPrefix+"/") {
-			continue
-		}
-		_ = VaultRemoveHook(ctx, path)
+		removeOwnedVaultEnvVar(ctx, ownedPrefix, field)
 	}
 }
 
-// StoreVaultSecretVar pushes a single plaintext SecretVar value into the vault at path
+// removeOwnedVaultEnvVar removes a single EnvVar's vault secret if it is a
+// vault-backed, non-fragment reference under ownedPrefix. Fragment refs (#key)
+// point at shared, externally-managed secrets and are never auto-deleted.
+func removeOwnedVaultEnvVar(ctx context.Context, ownedPrefix string, field *EnvVar) {
+	if field == nil || !field.IsFromVault() || field.VaultRef == "" {
+		return
+	}
+	path := strings.TrimPrefix(field.VaultRef, "vault.")
+	if strings.IndexByte(path, '#') >= 0 {
+		return
+	}
+	if !strings.HasPrefix(path, ownedPrefix+"/") {
+		return
+	}
+	_ = VaultRemoveHook(ctx, path)
+}
+
+// StoreVaultEnvVar pushes a single plaintext EnvVar value into the vault at path
 // and converts the field to a vault reference. No-op when vault disabled, field
 // is nil, env/vault-sourced, empty, or redacted.
 func StoreVaultSecretVar(ctx context.Context, path string, e *SecretVar) error {
@@ -142,6 +166,23 @@ func StoreOwnedVaultSecretVars(ctx context.Context, basePath string, model inter
 	rt := rv.Type()
 	for i := 0; i < rt.NumField(); i++ {
 		fv := rv.Field(i)
+		seg := vaultFieldSegment(rt.Field(i))
+		// map[string]EnvVar (e.g. MCP Headers): each entry gets its own secret
+		// at basePath/<column>/<mapKey>. Map values are not addressable, so copy
+		// out, store (mutates the copy to a ref), then write back.
+		if fv.Type() == envVarMapType {
+			iter := fv.MapRange()
+			for iter.Next() {
+				key := iter.Key()
+				e := iter.Value().Interface().(EnvVar)
+				path := basePath + "/" + seg + "/" + key.String()
+				if err := StoreVaultEnvVar(ctx, path, &e); err != nil {
+					return fmt.Errorf("vault store field %s[%s]: %w", rt.Field(i).Name, key.String(), err)
+				}
+				fv.SetMapIndex(key, reflect.ValueOf(e))
+			}
+			continue
+		}
 		var field *SecretVar
 		switch fv.Type() {
 		case secretVarType:
@@ -156,7 +197,6 @@ func StoreOwnedVaultSecretVars(ctx context.Context, basePath string, model inter
 		if field == nil {
 			continue
 		}
-		seg := vaultFieldSegment(rt.Field(i))
 		path := basePath + "/" + seg
 		if err := StoreVaultSecretVar(ctx, path, field); err != nil {
 			return fmt.Errorf("vault store field %s: %w", rt.Field(i).Name, err)

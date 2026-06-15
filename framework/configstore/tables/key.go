@@ -325,13 +325,6 @@ func (k *TableKey) BeforeSave(tx *gorm.DB) error {
 		k.SGLUrl = nil
 	}
 
-	if schemas.VaultStoreEnabled() {
-		if err := schemas.StoreOwnedVaultSecretVars(tx.Statement.Context,
-			schemas.VaultBasePath(k.TableName(), k.KeyID), k); err != nil {
-			return err
-		}
-	}
-
 	// Encrypt sensitive fields after serialization
 	if encrypt.IsEnabled() {
 		if err := encryptSecretVar(&k.Value); err != nil {
@@ -632,9 +625,6 @@ func (k *TableKey) AfterFind(tx *gorm.DB) error {
 	return nil
 }
 
-// AfterDelete hook for best-effort vault cleanup on row deletion.
-func (k *TableKey) AfterDelete(tx *gorm.DB) error {
-	base := schemas.VaultBasePath(k.TableName(), k.KeyID)
-	schemas.RemoveOwnedVaultSecretVars(tx.Statement.Context, base, k)
-	return nil
-}
+// VaultPathKey implements schemas.VaultPathKeyer so the global GORM vault
+// callback can compute the vault base path for this model automatically.
+func (k *TableKey) VaultPathKey() string { return k.KeyID }

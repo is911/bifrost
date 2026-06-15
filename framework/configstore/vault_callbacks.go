@@ -1,0 +1,76 @@
+package configstore
+
+import (
+	"reflect"
+
+	"github.com/maximhq/bifrost/core/schemas"
+	"gorm.io/gorm"
+)
+
+// RegisterVaultCallbacks installs global GORM callbacks that automatically
+// store plaintext EnvVar fields into the vault before create/update and
+// remove owned vault secrets after delete. Models opt in by implementing
+// schemas.VaultPathKeyer; models that don't implement it are silently skipped.
+func RegisterVaultCallbacks(db *gorm.DB) {
+	db.Callback().Create().Before("gorm:before_create").Register("bifrost:vault_store", vaultStoreCallback)
+	db.Callback().Update().Before("gorm:before_update").Register("bifrost:vault_store", vaultStoreCallback)
+	db.Callback().Delete().After("gorm:after_delete").Register("bifrost:vault_remove", vaultRemoveCallback)
+}
+
+func vaultStoreCallback(tx *gorm.DB) {
+	if !schemas.VaultStoreWriteEnabled() {
+		return
+	}
+	forEachModel(tx, func(model interface{}, keyer schemas.VaultPathKeyer) {
+		tableName := tx.Statement.Table
+		base := schemas.VaultBasePath(tableName, keyer.VaultPathKey())
+		if err := schemas.StoreOwnedVaultEnvVars(tx.Statement.Context, base, model); err != nil {
+			_ = tx.AddError(err)
+		}
+	})
+}
+
+func vaultRemoveCallback(tx *gorm.DB) {
+	if !schemas.VaultStoreWriteEnabled() {
+		return
+	}
+	forEachModel(tx, func(model interface{}, keyer schemas.VaultPathKeyer) {
+		tableName := tx.Statement.Table
+		base := schemas.VaultBasePath(tableName, keyer.VaultPathKey())
+		schemas.RemoveOwnedVaultEnvVars(tx.Statement.Context, base, model)
+	})
+}
+
+// forEachModel extracts the model(s) from the GORM statement and calls fn for
+// each one that implements VaultPathKeyer. Handles both single structs and
+// slices (batch operations).
+func forEachModel(tx *gorm.DB, fn func(model interface{}, keyer schemas.VaultPathKeyer)) {
+	if tx.Statement == nil {
+		return
+	}
+	rv := tx.Statement.ReflectValue
+	switch rv.Kind() {
+	case reflect.Struct:
+		if !rv.CanAddr() {
+			return
+		}
+		model := rv.Addr().Interface()
+		if keyer, ok := model.(schemas.VaultPathKeyer); ok {
+			fn(model, keyer)
+		}
+	case reflect.Slice:
+		for i := 0; i < rv.Len(); i++ {
+			elem := rv.Index(i)
+			if elem.Kind() == reflect.Ptr {
+				elem = elem.Elem()
+			}
+			if !elem.CanAddr() {
+				continue
+			}
+			model := elem.Addr().Interface()
+			if keyer, ok := model.(schemas.VaultPathKeyer); ok {
+				fn(model, keyer)
+			}
+		}
+	}
+}

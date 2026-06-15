@@ -11,6 +11,61 @@ import (
 
 type PostgresConfig = postgresconn.Config
 
+// buildPostgresDSN assembles a libpq-style DSN from the validated config.
+func buildPostgresDSN(config *PostgresConfig) string {
+	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		config.Host.GetValue(), config.Port.GetValue(), config.User.GetValue(),
+		config.Password.GetValue(), config.DBName.GetValue(), config.SSLMode.GetValue())
+}
+
+// openPostresConnection opens a *gorm.DB against the configured Postgres instance
+// using the shared bifrost logger. Used for both the throwaway migration pool
+// and the runtime pool.
+func openPostresConnection(dsn string, logger schemas.Logger) (*gorm.DB, error) {
+	db, err := gorm.Open(postgres.New(postgres.Config{DSN: dsn}), &gorm.Config{
+		Logger: newGormLogger(logger),
+	})
+	if err != nil {
+		return nil, err
+	}
+	RegisterVaultCallbacks(db)
+	return db, nil
+}
+
+// closeDbConn closes the *sql.DB backing a *gorm.DB, logging any error.
+// Used in error paths and for the throwaway migration pool.
+func closeDbConn(db *gorm.DB, logger schemas.Logger) {
+	sqlDB, err := db.DB()
+	if err != nil {
+		logger.Error("failed to resolve *sql.DB for close: %v", err)
+		return
+	}
+	if err := sqlDB.Close(); err != nil {
+		logger.Error("failed to close DB connection: %v", err)
+	}
+}
+
+// applyPostgresPoolTuning applies MaxIdleConns / MaxOpenConns from config to
+// the supplied *gorm.DB, falling back to defaults when the config leaves the
+// field at zero.
+func applyPostgresPoolTuning(db *gorm.DB, config *PostgresConfig) error {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	maxIdleConns := config.MaxIdleConns
+	if maxIdleConns == 0 {
+		maxIdleConns = 5
+	}
+	sqlDB.SetMaxIdleConns(maxIdleConns)
+	maxOpenConns := config.MaxOpenConns
+	if maxOpenConns == 0 {
+		maxOpenConns = 50
+	}
+	sqlDB.SetMaxOpenConns(maxOpenConns)
+	return nil
+}
+
 // newPostgresConfigStore creates a new Postgres config store.
 //
 // Uses a two-pool lifecycle to avoid SQLSTATE 0A000 ("cached plan must not

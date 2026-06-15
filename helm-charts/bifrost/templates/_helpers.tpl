@@ -725,6 +725,28 @@ false
 {{- $sqliteConfigStore := dict "enabled" true "type" "sqlite" "config" (dict "path" (printf "%s/config.db" .Values.bifrost.appDir)) }}
 {{- $_ := set $config "config_store" $sqliteConfigStore }}
 {{- end }}
+{{- /* Vault Store (enterprise secret management) */ -}}
+{{- if and .Values.storage.configStore.vaultStore .Values.storage.configStore.vaultStore.enabled }}
+{{- $vs := .Values.storage.configStore.vaultStore }}
+{{- $vaultStore := dict "enabled" true "type" $vs.type }}
+{{- if $vs.prefix }}
+{{- $_ := set $vaultStore "prefix" $vs.prefix }}
+{{- end }}
+{{- if $vs.accessMode }}
+{{- $_ := set $vaultStore "access_mode" $vs.accessMode }}
+{{- end }}
+{{- if $vs.aws }}
+{{- $_ := set $vaultStore "aws" $vs.aws }}
+{{- end }}
+{{- if $vs.gcp }}
+{{- $_ := set $vaultStore "gcp" $vs.gcp }}
+{{- end }}
+{{- if $vs.hashicorp }}
+{{- $_ := set $vaultStore "hashicorp" $vs.hashicorp }}
+{{- end }}
+{{- $cs := index $config "config_store" }}
+{{- $_ := set $cs "vault_store" $vaultStore }}
+{{- end }}
 {{- end }}
 {{- /* Logs Store */ -}}
 {{- if .Values.storage.logsStore.enabled }}

@@ -5638,6 +5638,15 @@ func (c *Config) AddProviderKey(ctx context.Context, provider schemas.ModelProvi
 			}
 			return fmt.Errorf("failed to create provider key in store: %w", err)
 		}
+		// The vault store callback rewrites the secret into a vault reference
+		// during the DB write, but only on the store-side row copy. Re-read so the
+		// in-memory key (and API responses) carry FromVault/VaultRef instead of the
+		// original plaintext.
+		if storedKey, err := c.ConfigStore.GetProviderKey(ctx, provider, key.ID); err == nil {
+			if idx := slices.IndexFunc(updatedConfig.Keys, func(k schemas.Key) bool { return k.ID == key.ID }); idx != -1 {
+				updatedConfig.Keys[idx] = *storedKey
+			}
+		}
 	}
 
 	c.Providers[provider] = updatedConfig
@@ -5691,6 +5700,13 @@ func (c *Config) UpdateProviderKey(ctx context.Context, provider schemas.ModelPr
 				return ErrNotFound
 			}
 			return fmt.Errorf("failed to update provider key in store: %w", err)
+		}
+		// The vault store callback rewrites the secret into a vault reference
+		// during the DB write, but only on the store-side row copy. Re-read so the
+		// in-memory key (and API responses) carry FromVault/VaultRef instead of the
+		// original plaintext.
+		if storedKey, err := c.ConfigStore.GetProviderKey(ctx, provider, keyID); err == nil {
+			updatedConfig.Keys[index] = *storedKey
 		}
 	}
 

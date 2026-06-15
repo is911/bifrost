@@ -3336,6 +3336,35 @@
             "maxOpenConns": {
               "type": "integer",
               "minimum": 2
+            },
+            "vaultStore": {
+              "type": "object",
+              "description": "Vault store for external secret management",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": ["aws-secrets-manager", "gcp-secret-manager", "hashicorp-vault"]
+                },
+                "prefix": {
+                  "type": "string"
+                },
+                "accessMode": {
+                  "type": "string",
+                  "enum": ["read_only", "read_and_write"]
+                },
+                "aws": {
+                  "type": "object"
+                },
+                "gcp": {
+                  "type": "object"
+                },
+                "hashicorp": {
+                  "type": "object"
+                }
+              }
             }
           }
         },
