@@ -1124,6 +1124,13 @@ export default function AppSidebar() {
                   description: "Proxy configuration",
                   hasAccess: hasSettingsAccess,
                 },
+                {
+                  title: "License",
+                  url: "/workspace/config/license",
+                  icon: ShieldCheck,
+                  description: "License management",
+                  hasAccess: hasSettingsAccess,
+                },
               ]
             : []),
           {

@@ -3,7 +3,6 @@ import NotAvailableBanner from "@/components/notAvailableBanner";
 import ProgressProvider from "@/components/progressBar";
 import Sidebar from "@/components/sidebar";
 import { ThemeProvider } from "@/components/themeProvider";
-import TrialExpiryBanner from "@/components/trialExpiryBanner";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { useStoreSync } from "@/hooks/useStoreSync";
 import { WebSocketProvider } from "@/hooks/useWebSocket";
@@ -14,6 +13,9 @@ import {
   useIsAuthEnabledQuery,
 } from "@/lib/store";
 import { BifrostConfig } from "@/lib/types/config";
+import LicenseExpiryBanner from "@enterprise/components/license/LicenseExpiryBanner";
+import LicenseUploadView from "@enterprise/components/license/LicenseUploadView";
+import { useGetLicenseStatusQuery } from "@enterprise/lib/store/apis/licenseApi";
 import {
   RbacProvider,
   useRbacContext,
@@ -39,6 +41,14 @@ const DevProfiler = () => (
 function StoreSyncInitializer() {
   useStoreSync();
   return null;
+}
+
+function LicenseGate({ children }: { children: React.ReactNode }) {
+  const { data: licenseStatus, isLoading, isError } = useGetLicenseStatusQuery();
+  if (isLoading) return <FullPageLoader />;
+  // isError means /api/license/status doesn't exist (no public key configured) — pass through.
+  if (!isError && licenseStatus && !licenseStatus.valid) return <LicenseUploadView />;
+  return <>{children}</>;
 }
 
 function AppContent({ children }: { children: React.ReactNode }) {
@@ -134,8 +144,8 @@ function AppContent({ children }: { children: React.ReactNode }) {
         <SidebarProvider>
           <Sidebar />
           <div className="dark:bg-card custom-scrollbar content-container my-[0.5rem] mr-[0.5rem] h-[calc(100dvh-1rem)] w-full min-w-xl overflow-auto rounded-md border border-gray-200 bg-white px-10 dark:border-zinc-800">
-            <TrialExpiryBanner />
-            <main className="custom-scrollbar content-container-inner relative mx-auto flex h-full min-h-0 flex-col overflow-y-hidden p-4">
+            <LicenseExpiryBanner />
+            <main className="custom-scrollbar content-container-inner relative mx-auto flex flex-col overflow-y-hidden p-4">
               {isLoading ? (
                 <FullPageLoader />
               ) : (
@@ -192,7 +202,9 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
         <ReduxProvider>
           <NuqsAdapter>
             <RbacProvider>
-              <AppContent>{children}</AppContent>
+              <LicenseGate>
+                <AppContent>{children}</AppContent>
+              </LicenseGate>
               {process.env.NODE_ENV === "development" &&
                 !process.env.BIFROST_DISABLE_PROFILER && <DevProfiler />}
             </RbacProvider>

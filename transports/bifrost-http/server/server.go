@@ -1832,8 +1832,10 @@ func (s *BifrostHTTPServer) Bootstrap(ctx context.Context) error {
 // Also watches signals and errors
 func (s *BifrostHTTPServer) Start() error {
 	// Printing plugin status in a table
-	for _, pluginStatus := range s.Config.GetPluginStatus() {
-		logger.Info("plugin status: %s - %s", pluginStatus.Name, pluginStatus.Status)
+	if s.Config != nil {
+		for _, pluginStatus := range s.Config.GetPluginStatus() {
+			logger.Info("plugin status: %s - %s", pluginStatus.Name, pluginStatus.Status)
+		}
 	}
 	// Create channels for signal and error handling
 	sigChan := make(chan os.Signal, 1)
