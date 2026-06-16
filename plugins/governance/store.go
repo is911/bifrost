@@ -2070,6 +2070,17 @@ func (gs *LocalGovernanceStore) DumpBudgets(ctx context.Context, baselines map[s
 	return nil
 }
 
+// stampBudgetCustomerOwner sets the customer owner FK on a budget that has no
+// owner yet. Customer budgets are linked via customer.budget_id, so the budget
+// row's own FK columns load as nil; the alerting snapshot store's budgetOwnerScope
+// needs CustomerID set or customer-scoped budget alerts are misattributed to global scope.
+func stampBudgetCustomerOwner(b *configstoreTables.TableBudget, customerID string) {
+	if b == nil || b.VirtualKeyID != nil || b.TeamID != nil || b.CustomerID != nil || b.ProviderConfigID != nil || b.ModelConfigID != nil {
+		return
+	}
+	b.CustomerID = &customerID
+}
+
 // DATABASE METHODS
 
 // loadFromDatabase loads all governance data from the database into memory
@@ -2127,6 +2138,9 @@ func (gs *LocalGovernanceStore) loadFromDatabase(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to load routing rules: %w", err)
 	}
+
+	// Back-fill owner-scope FKs before the in-memory maps are rebuilt.
+	gs.backfillOwnerScopes(virtualKeys, teams, customers, budgets, rateLimits)
 
 	// Rebuild in-memory structures (lock-free)
 	rebuildStart := time.Now()
@@ -2270,6 +2284,9 @@ func (gs *LocalGovernanceStore) loadFromConfigMemory(ctx context.Context, config
 
 		virtualKeys[i] = *vk
 	}
+
+	// Back-fill owner-scope FKs before the in-memory maps are rebuilt.
+	gs.backfillOwnerScopes(virtualKeys, teams, customers, budgets, rateLimits)
 
 	// Rebuild in-memory structures (lock-free)
 	gs.rebuildInMemoryStructures(ctx, customers, teams, virtualKeys, budgets, rateLimits, modelConfigs, providers, routingRules)
@@ -2440,6 +2457,34 @@ func (gs *LocalGovernanceStore) rebuildInMemoryStructures(ctx context.Context, c
 	}
 	gs.LastDBUsagesRateLimitsTokensMu.Unlock()
 	gs.LastDBUsagesRateLimitsRequestsMu.Unlock()
+}
+
+// backfillOwnerScopes stamps customer-owned budgets onto the in-memory budget
+// instances that EachBudget iterates. Rate limits are now indexed directly from
+// their owner rows, so they no longer need synthetic owner FKs on the rate-limit
+// instance itself.
+func (gs *LocalGovernanceStore) backfillOwnerScopes(
+	virtualKeys []configstoreTables.TableVirtualKey,
+	teams []configstoreTables.TableTeam,
+	customers []configstoreTables.TableCustomer,
+	budgets []configstoreTables.TableBudget,
+	rateLimits []configstoreTables.TableRateLimit,
+) {
+	budgetByID := make(map[string]*configstoreTables.TableBudget, len(budgets))
+	for i := range budgets {
+		budget := &budgets[i]
+		budgetByID[budget.ID] = budget
+	}
+	for i := range customers {
+		customer := &customers[i]
+		if customer.BudgetID != nil {
+			if b := budgetByID[*customer.BudgetID]; b != nil &&
+				b.VirtualKeyID == nil && b.TeamID == nil && b.CustomerID == nil && b.ProviderConfigID == nil && b.ModelConfigID == nil {
+				id := customer.ID
+				b.CustomerID = &id
+			}
+		}
+	}
 }
 
 // collectRateLimitsFromHierarchy collects rate limits and their metadata from the hierarchy (Provider Configs → VK → Team → Customer)
@@ -3203,6 +3248,7 @@ func (gs *LocalGovernanceStore) CreateCustomerInMemory(ctx context.Context, cust
 	clone := *customer
 	for i := range clone.Budgets {
 		clone.Budgets[i].IsCalendarAligned = clone.CalendarAligned
+		stampBudgetCustomerOwner(&clone.Budgets[i], clone.ID)
 		gs.budgets.Store(clone.Budgets[i].ID, &clone.Budgets[i])
 	}
 	if clone.RateLimit != nil {
@@ -3237,6 +3283,7 @@ func (gs *LocalGovernanceStore) UpdateCustomerInMemory(ctx context.Context, cust
 					b.LastReset = existingBudget.LastReset
 				}
 			}
+			stampBudgetCustomerOwner(b, clone.ID)
 			gs.budgets.Store(b.ID, b)
 			newBudgetIDs[b.ID] = true
 		}
