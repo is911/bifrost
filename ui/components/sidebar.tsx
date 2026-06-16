@@ -1,5 +1,6 @@
 import {
   ArrowUpRight,
+  Bell,
   BookOpenText,
   BookUser,
   Boxes,
@@ -14,12 +15,15 @@ import {
   Flag,
   FlaskConical,
   FolderGit,
+  Gavel,
   Globe,
+  History,
   KeyRound,
   Landmark,
   LayoutGrid,
   LogOut,
   Logs,
+  Megaphone,
   Network,
   PanelLeftClose,
   PanelLeftOpen,
@@ -366,6 +370,7 @@ const SidebarItemView = ({
         tooltip={isSidebarCollapsed ? undefined : item.title}
         className={buttonClassName}
         onClick={handleClick}
+        data-testid={`sidebar-item-btn-${slug(item.title)}`}
       >
         {innerContent}
       </SidebarMenuButton>
@@ -586,6 +591,7 @@ const SidebarItemView = ({
                 {subItem.hasAccess === false ? (
                   <SidebarMenuSubButton
                     data-nav-url={subItemHref}
+                    data-testid={`sidebar-subitem-disabled-${slug(subItem.title)}`}
                     className={subItemClassName}
                   >
                     {subInner}
@@ -596,6 +602,7 @@ const SidebarItemView = ({
                       to={subItemHref as any}
                       preload="intent"
                       data-nav-url={subItemHref}
+                      data-testid={`sidebar-subitem-link-${slug(subItem.title)}`}
                     >
                       {subInner}
                     </Link>
@@ -677,6 +684,9 @@ export default function AppSidebar() {
     RbacResource.Observability,
     RbacOperation.View,
   );
+  // Alerting is gated on the same resource the alerting route layouts use
+  // (AlertRules), so sidebar visibility matches page access.
+  const hasAlertingAccess = useRbac(RbacResource.AlertRules, RbacOperation.View);
   const hasDashboardAccess = useRbac(
     RbacResource.Dashboard,
     RbacOperation.View,
@@ -929,6 +939,36 @@ export default function AppSidebar() {
         hasAccess: hasPluginsAccess,
       },
       {
+        title: "Alerting",
+        url: "/workspace/alerting",
+        icon: Bell,
+        description: "Manage alert channels, rules, and history",
+        hasAccess: hasAlertingAccess,
+        subItems: [
+          {
+            title: "Channels",
+            url: "/workspace/alerting/channels",
+            icon: Megaphone,
+            description: "Configure notification channels",
+            hasAccess: hasAlertingAccess,
+          },
+          {
+            title: "Rules",
+            url: "/workspace/alerting/rules",
+            icon: Gavel,
+            description: "Define alerting rules",
+            hasAccess: hasAlertingAccess,
+          },
+          {
+            title: "History",
+            url: "/workspace/alerting/history",
+            icon: History,
+            description: "Review alert delivery history",
+            hasAccess: hasAlertingAccess,
+          },
+        ],
+      },
+      {
         title: "Governance",
         url: "/workspace/governance",
         icon: Landmark,
@@ -1154,6 +1194,7 @@ export default function AppSidebar() {
       hasLogsAccess,
       hasAPIKeyAccess,
       hasObservabilityAccess,
+      hasAlertingAccess,
       hasDashboardAccess,
       hasModelProvidersAccess,
       hasMCPGatewayAccess,
