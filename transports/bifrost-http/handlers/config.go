@@ -132,46 +132,46 @@ func (h *ConfigHandler) getConfig(ctx *fasthttp.RequestCtx) {
 		// Getting username and password from auth config
 		// This username password is for the dashboard authentication
 		if authConfig != nil {
-			// For password, return EnvVar structure with redacted value
+			// For password, return SecretVar structure with redacted value
 			// If from env, preserve env_var reference but clear value
 			// If not from env, show <redacted> as the value
-			var passwordEnvVar *schemas.EnvVar
+			var passwordSecretVar *schemas.SecretVar
 			if authConfig.AdminPassword != nil && authConfig.AdminPassword.IsFromEnv() {
-				passwordEnvVar = &schemas.EnvVar{
+				passwordSecretVar = &schemas.SecretVar{
 					Val:     "",
-					EnvVar:  authConfig.AdminPassword.EnvVar,
+					SecretVar:  authConfig.AdminPassword.SecretVar,
 					FromEnv: true,
 				}
 			} else if authConfig.AdminPassword != nil && authConfig.AdminPassword.IsFromVault() {
-				passwordEnvVar = &schemas.EnvVar{
+				passwordSecretVar = &schemas.SecretVar{
 					Val:       "",
 					FromVault: true,
 					VaultRef:  authConfig.AdminPassword.VaultRef,
 				}
 			} else {
-				passwordEnvVar = &schemas.EnvVar{
+				passwordSecretVar = &schemas.SecretVar{
 					Val:     "<redacted>",
-					EnvVar:  "",
+					SecretVar:  "",
 					FromEnv: false,
 				}
 			}
 			mapConfig["auth_config"] = map[string]any{
 				"admin_username": authConfig.AdminUserName,
-				"admin_password": passwordEnvVar,
+				"admin_password": passwordSecretVar,
 				"is_enabled":     authConfig.IsEnabled,
 			}
 		} else {
-			// No auth config exists yet, return default empty EnvVar values
+			// No auth config exists yet, return default empty SecretVar values
 			mapConfig["auth_config"] = map[string]any{
-				"admin_username": &schemas.EnvVar{Val: "", EnvVar: "", FromEnv: false},
-				"admin_password": &schemas.EnvVar{Val: "", EnvVar: "", FromEnv: false},
+				"admin_username": &schemas.SecretVar{Val: "", SecretVar: "", FromEnv: false},
+				"admin_password": &schemas.SecretVar{Val: "", SecretVar: "", FromEnv: false},
 				"is_enabled":     false,
 			}
 		}
 	} else {
 		mapConfig["auth_config"] = map[string]any{
-			"admin_username": &schemas.EnvVar{Val: "", EnvVar: "", FromEnv: false},
-			"admin_password": &schemas.EnvVar{Val: "", EnvVar: "", FromEnv: false},
+			"admin_username": &schemas.SecretVar{Val: "", SecretVar: "", FromEnv: false},
+			"admin_password": &schemas.SecretVar{Val: "", SecretVar: "", FromEnv: false},
 			"is_enabled":     false,
 		}
 	}
@@ -693,21 +693,21 @@ func (h *ConfigHandler) updateConfig(ctx *fasthttp.RequestCtx) {
 		}
 
 		if payload.AuthConfig.IsEnabled {
-			// Initialize nil pointers to empty EnvVar to prevent nil-pointer dereference
+			// Initialize nil pointers to empty SecretVar to prevent nil-pointer dereference
 			if payload.AuthConfig.AdminUserName == nil {
-				payload.AuthConfig.AdminUserName = &schemas.EnvVar{}
+				payload.AuthConfig.AdminUserName = &schemas.SecretVar{}
 			}
 			if payload.AuthConfig.AdminPassword == nil {
-				payload.AuthConfig.AdminPassword = &schemas.EnvVar{}
+				payload.AuthConfig.AdminPassword = &schemas.SecretVar{}
 			}
 
 			// Validate env variables are set if referenced
 			if payload.AuthConfig.AdminUserName.IsFromEnv() && payload.AuthConfig.AdminUserName.GetValue() == "" {
-				SendError(ctx, fasthttp.StatusBadRequest, fmt.Sprintf("environment variable %s is not set", payload.AuthConfig.AdminUserName.EnvVar))
+				SendError(ctx, fasthttp.StatusBadRequest, fmt.Sprintf("environment variable %s is not set", payload.AuthConfig.AdminUserName.SecretVar))
 				return
 			}
 			if payload.AuthConfig.AdminPassword.IsFromEnv() && payload.AuthConfig.AdminPassword.GetValue() == "" {
-				SendError(ctx, fasthttp.StatusBadRequest, fmt.Sprintf("environment variable %s is not set", payload.AuthConfig.AdminPassword.EnvVar))
+				SendError(ctx, fasthttp.StatusBadRequest, fmt.Sprintf("environment variable %s is not set", payload.AuthConfig.AdminPassword.SecretVar))
 				return
 			}
 
@@ -734,10 +734,10 @@ func (h *ConfigHandler) updateConfig(ctx *fasthttp.RequestCtx) {
 						return
 					}
 					// Preserve env-var metadata when storing hashed password
-					payload.AuthConfig.AdminPassword = &schemas.EnvVar{
+					payload.AuthConfig.AdminPassword = &schemas.SecretVar{
 						Val:     hashedPassword,
 						FromEnv: payload.AuthConfig.AdminPassword.IsFromEnv(),
-						EnvVar:  payload.AuthConfig.AdminPassword.EnvVar,
+						SecretVar:  payload.AuthConfig.AdminPassword.SecretVar,
 					}
 				}
 			}

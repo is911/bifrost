@@ -10,19 +10,19 @@ import (
 	"github.com/bytedance/sonic"
 )
 
-// EnvVar is a wrapper around a value that can be sourced from an environment variable
+// SecretVar is a wrapper around a value that can be sourced from an environment variable
 // or an external vault (e.g. AWS Secrets Manager, GCP Secret Manager, HashiCorp Vault).
 // Three reference forms are accepted: plain text, "env.VAR_NAME", and "vault.path/to/secret".
-type EnvVar struct {
+type SecretVar struct {
 	Val       string `json:"value"`
-	EnvVar    string `json:"env_var"`
+	SecretVar    string `json:"env_var"`
 	FromEnv   bool   `json:"from_env"`
 	VaultRef  string `json:"vault_var,omitempty"`
 	FromVault bool   `json:"from_vault,omitempty"`
 }
 
-// NewEnvVar creates a new EnvValue from a string.
-func NewEnvVar(value string) *EnvVar {
+// NewSecretVar creates a new EnvValue from a string.
+func NewSecretVar(value string) *SecretVar {
 	// Cleanup string if required
 	// Use strconv.Unquote to properly handle JSON string escape sequences
 	// This converts "\"{\\\"key\\\":\\\"value\\\"}\"" to "{\"key\":\"value\"}"
@@ -31,21 +31,21 @@ func NewEnvVar(value string) *EnvVar {
 		val = unquoted
 	}
 	// Here we will need to check if the incoming data is a valid JSON object
-	// If it's a valid JSON object and follows the EnvVar schema, then we will unmarshal it into an EnvVar object
+	// If it's a valid JSON object and follows the SecretVar schema, then we will unmarshal it into an SecretVar object
 	if sonic.Valid([]byte(value)) {
 		valueNode, _ := sonic.Get([]byte(val), "value")
 		envNode, _ := sonic.Get([]byte(val), "env_var")
 		if valueNode.Exists() && envNode.Exists() {
 			// Use a type alias to avoid infinite recursion (alias doesn't inherit methods)
-			type envVarAlias EnvVar
-			var envVar envVarAlias
-			if err := sonic.Unmarshal([]byte(value), &envVar); err == nil {
-				e := &EnvVar{
-					Val:       envVar.Val,
-					FromEnv:   envVar.FromEnv,
-					EnvVar:    envVar.EnvVar,
-					FromVault: envVar.FromVault,
-					VaultRef:  envVar.VaultRef,
+			type secretVarAlias SecretVar
+			var secretVar secretVarAlias
+			if err := sonic.Unmarshal([]byte(value), &secretVar); err == nil {
+				e := &SecretVar{
+					Val:       secretVar.Val,
+					FromEnv:   secretVar.FromEnv,
+					SecretVar:    secretVar.SecretVar,
+					FromVault: secretVar.FromVault,
+					VaultRef:  secretVar.VaultRef,
 				}
 				// Explicit vault reference: {from_vault: true, vault_var: "vault.path"}
 				if e.FromVault && e.VaultRef != "" {
@@ -59,19 +59,19 @@ func NewEnvVar(value string) *EnvVar {
 					return e
 				}
 				// Old format: value == env_var == "env.XXX"
-				if strings.HasPrefix(e.Val, "env.") && e.Val == e.EnvVar {
+				if strings.HasPrefix(e.Val, "env.") && e.Val == e.SecretVar {
 					e.Val = ""
 					// Load the environment variable value
-					envValue, ok := os.LookupEnv(strings.TrimPrefix(e.EnvVar, "env."))
+					envValue, ok := os.LookupEnv(strings.TrimPrefix(e.SecretVar, "env."))
 					if ok {
 						e.Val = envValue
 					}
 					e.FromEnv = true
 				}
 				// New format: value is empty, from_env=true, env_var holds the reference
-				if e.Val == "" && e.FromEnv && strings.HasPrefix(e.EnvVar, "env.") {
+				if e.Val == "" && e.FromEnv && strings.HasPrefix(e.SecretVar, "env.") {
 					e.FromEnv = true
-					if envValue, ok := os.LookupEnv(strings.TrimPrefix(e.EnvVar, "env.")); ok {
+					if envValue, ok := os.LookupEnv(strings.TrimPrefix(e.SecretVar, "env.")); ok {
 						e.Val = envValue
 					}
 				}
@@ -80,7 +80,7 @@ func NewEnvVar(value string) *EnvVar {
 		}
 	}
 	if strings.HasPrefix(val, "vault.") {
-		e := &EnvVar{
+		e := &SecretVar{
 			Val:       val,
 			VaultRef:  val,
 			FromVault: true,
@@ -92,27 +92,27 @@ func NewEnvVar(value string) *EnvVar {
 	}
 	if envKey, ok := strings.CutPrefix(val, "env."); ok {
 		if envValue, ok := os.LookupEnv(envKey); ok {
-			return &EnvVar{
+			return &SecretVar{
 				Val:     envValue,
 				FromEnv: true,
-				EnvVar:  val,
+				SecretVar:  val,
 			}
 		}
-		return &EnvVar{
+		return &SecretVar{
 			Val:     "",
 			FromEnv: true,
-			EnvVar:  val,
+			SecretVar:  val,
 		}
 	}
-	return &EnvVar{
+	return &SecretVar{
 		Val:     val,
 		FromEnv: false,
-		EnvVar:  "",
+		SecretVar:  "",
 	}
 }
 
 // IsFromVault returns true if the value is sourced from an external vault.
-func (e *EnvVar) IsFromVault() bool {
+func (e *SecretVar) IsFromVault() bool {
 	if e == nil {
 		return false
 	}
@@ -120,7 +120,7 @@ func (e *EnvVar) IsFromVault() bool {
 }
 
 // IsRedacted returns true if the value is redacted.
-func (e *EnvVar) IsRedacted() bool {
+func (e *SecretVar) IsRedacted() bool {
 	if e.Val == "" && !e.FromEnv && !e.FromVault {
 		return false
 	}
@@ -150,7 +150,7 @@ func (e *EnvVar) IsRedacted() bool {
 }
 
 // Equals checks if two SecretKeys are equal.
-func (e *EnvVar) Equals(other *EnvVar) bool {
+func (e *SecretVar) Equals(other *SecretVar) bool {
 	if e == nil && other == nil {
 		return true
 	}
@@ -158,32 +158,32 @@ func (e *EnvVar) Equals(other *EnvVar) bool {
 		return false
 	}
 	return e.Val == other.Val &&
-		e.EnvVar == other.EnvVar &&
+		e.SecretVar == other.SecretVar &&
 		e.FromEnv == other.FromEnv &&
 		e.VaultRef == other.VaultRef &&
 		e.FromVault == other.FromVault
 }
 
 // Redacted returns a new SecretKey with the value redacted.
-func (e *EnvVar) Redacted() *EnvVar {
+func (e *SecretVar) Redacted() *SecretVar {
 	if e == nil {
 		return nil
 	}
 	if e.Val == "" {
-		return &EnvVar{
+		return &SecretVar{
 			Val:       "",
 			FromEnv:   e.FromEnv,
-			EnvVar:    e.EnvVar,
+			SecretVar:    e.SecretVar,
 			FromVault: e.FromVault,
 			VaultRef:  e.VaultRef,
 		}
 	}
 	// If key is 8 characters or less, just return all asterisks
 	if len(e.Val) <= 8 {
-		return &EnvVar{
+		return &SecretVar{
 			Val:       strings.Repeat("*", len(e.Val)),
 			FromEnv:   e.FromEnv,
-			EnvVar:    e.EnvVar,
+			SecretVar:    e.SecretVar,
 			FromVault: e.FromVault,
 			VaultRef:  e.VaultRef,
 		}
@@ -193,43 +193,43 @@ func (e *EnvVar) Redacted() *EnvVar {
 	suffix := e.Val[len(e.Val)-4:]
 	middle := strings.Repeat("*", 24)
 
-	return &EnvVar{
+	return &SecretVar{
 		Val:       prefix + middle + suffix,
 		FromEnv:   e.FromEnv,
-		EnvVar:    e.EnvVar,
+		SecretVar:    e.SecretVar,
 		FromVault: e.FromVault,
 		VaultRef:  e.VaultRef,
 	}
 }
 
-// FullyRedacted returns a copy of the EnvVar with Val replaced by a fixed placeholder
+// FullyRedacted returns a copy of the SecretVar with Val replaced by a fixed placeholder
 // so no substring of the original value is exposed. Use for API responses where
-// Redacted is unsafe (e.g. literal proxy passwords). FromEnv/EnvVar and
+// Redacted is unsafe (e.g. literal proxy passwords). FromEnv/SecretVar and
 // FromVault/VaultRef are preserved so references remain visible.
-func (e *EnvVar) FullyRedacted() *EnvVar {
+func (e *SecretVar) FullyRedacted() *SecretVar {
 	if e == nil {
 		return nil
 	}
 	if e.Val == "" {
-		return &EnvVar{
+		return &SecretVar{
 			Val:       "",
 			FromEnv:   e.FromEnv,
-			EnvVar:    e.EnvVar,
+			SecretVar:    e.SecretVar,
 			FromVault: e.FromVault,
 			VaultRef:  e.VaultRef,
 		}
 	}
-	return &EnvVar{
+	return &SecretVar{
 		Val:       "<REDACTED>",
 		FromEnv:   e.FromEnv,
-		EnvVar:    e.EnvVar,
+		SecretVar:    e.SecretVar,
 		FromVault: e.FromVault,
 		VaultRef:  e.VaultRef,
 	}
 }
 
 // UnmarshalJSON unmarshals the value from JSON.
-func (e *EnvVar) UnmarshalJSON(data []byte) error {
+func (e *SecretVar) UnmarshalJSON(data []byte) error {
 	val := string(data)
 	// Cleanup string if required
 	// Use strconv.Unquote to properly handle JSON string escape sequences
@@ -237,20 +237,20 @@ func (e *EnvVar) UnmarshalJSON(data []byte) error {
 	if unquoted, err := strconv.Unquote(val); err == nil {
 		val = unquoted
 	}
-	// Check if the incoming data is a valid JSON object matching the EnvVar schema.
+	// Check if the incoming data is a valid JSON object matching the SecretVar schema.
 	if sonic.Valid(data) {
 		valueNode, _ := sonic.Get(data, "value")
 		envNode, _ := sonic.Get(data, "env_var")
 		if valueNode.Exists() && envNode.Exists() {
 			// Use a type alias to avoid infinite recursion (alias doesn't inherit methods)
-			type envVarAlias EnvVar
-			var envVar envVarAlias
-			if err := sonic.Unmarshal(data, &envVar); err == nil {
-				e.Val = envVar.Val
-				e.FromEnv = envVar.FromEnv
-				e.EnvVar = envVar.EnvVar
-				e.FromVault = envVar.FromVault
-				e.VaultRef = envVar.VaultRef
+			type secretVarAlias SecretVar
+			var secretVar secretVarAlias
+			if err := sonic.Unmarshal(data, &secretVar); err == nil {
+				e.Val = secretVar.Val
+				e.FromEnv = secretVar.FromEnv
+				e.SecretVar = secretVar.SecretVar
+				e.FromVault = secretVar.FromVault
+				e.VaultRef = secretVar.VaultRef
 
 				// Explicit vault reference: {from_vault: true, vault_var: "vault.path"}
 				if e.FromVault && e.VaultRef != "" {
@@ -264,17 +264,17 @@ func (e *EnvVar) UnmarshalJSON(data []byte) error {
 					return nil
 				}
 				// Old format: value == env_var == "env.XXX"
-				if strings.HasPrefix(e.Val, "env.") && e.Val == e.EnvVar {
+				if strings.HasPrefix(e.Val, "env.") && e.Val == e.SecretVar {
 					e.Val = ""
-					envValue, ok := os.LookupEnv(strings.TrimPrefix(e.EnvVar, "env."))
+					envValue, ok := os.LookupEnv(strings.TrimPrefix(e.SecretVar, "env."))
 					if ok {
 						e.Val = envValue
 					}
 					e.FromEnv = true
 				}
 				// New format: value is empty, from_env=true, env_var holds the reference
-				if e.Val == "" && e.FromEnv && strings.HasPrefix(e.EnvVar, "env.") {
-					if envValue, ok := os.LookupEnv(strings.TrimPrefix(e.EnvVar, "env.")); ok {
+				if e.Val == "" && e.FromEnv && strings.HasPrefix(e.SecretVar, "env.") {
+					if envValue, ok := os.LookupEnv(strings.TrimPrefix(e.SecretVar, "env.")); ok {
 						e.Val = envValue
 					}
 				}
@@ -289,7 +289,7 @@ func (e *EnvVar) UnmarshalJSON(data []byte) error {
 		e.FromVault = true
 		e.Val = val
 		e.FromEnv = false
-		e.EnvVar = ""
+		e.SecretVar = ""
 		if vaultValue, ok := LookupVault(val); ok {
 			e.Val = vaultValue
 		}
@@ -299,35 +299,35 @@ func (e *EnvVar) UnmarshalJSON(data []byte) error {
 		if envValue, ok := os.LookupEnv(envKey); ok {
 			e.Val = envValue
 			e.FromEnv = true
-			e.EnvVar = val
+			e.SecretVar = val
 			return nil
 		}
 		e.Val = ""
 		e.FromEnv = true
-		e.EnvVar = val
+		e.SecretVar = val
 		e.FromVault = false
 		e.VaultRef = ""
 		return nil
 	}
 	e.Val = val
 	e.FromEnv = false
-	e.EnvVar = ""
+	e.SecretVar = ""
 	e.FromVault = false
 	e.VaultRef = ""
 	return nil
 }
 
 // String returns the value as a string.
-func (e *EnvVar) String() string {
+func (e *SecretVar) String() string {
 	return e.Val
 }
 
 // Scan scans the value from the database.
-func (e *EnvVar) Scan(value any) error {
+func (e *SecretVar) Scan(value any) error {
 	if value == nil {
 		e.Val = ""
 		e.FromEnv = false
-		e.EnvVar = ""
+		e.SecretVar = ""
 		e.FromVault = false
 		e.VaultRef = ""
 		return nil
@@ -340,7 +340,7 @@ func (e *EnvVar) Scan(value any) error {
 		// The string may have "\"env.TEST\"", "env.TEST" or "env.TEST\"", we need to clean it up to "env.TEST"
 		val := strings.Trim(v, "\"")
 		// Vault reference: keep the reference in Val so the AfterFind GORM hook
-		// (resolveVaultEnvVar) can resolve it via ResolveString(&e.Val). VaultRef
+		// (resolveVaultSecretVar) can resolve it via ResolveString(&e.Val). VaultRef
 		// preserves the original path so it survives resolution and can be surfaced
 		// in API responses and re-stored correctly on writes.
 		if strings.HasPrefix(val, "vault.") {
@@ -348,7 +348,7 @@ func (e *EnvVar) Scan(value any) error {
 			e.VaultRef = val
 			e.FromVault = true
 			e.FromEnv = false
-			e.EnvVar = ""
+			e.SecretVar = ""
 			if vaultValue, ok := LookupVault(val); ok {
 				e.Val = vaultValue
 			}
@@ -358,21 +358,21 @@ func (e *EnvVar) Scan(value any) error {
 			if envValue, ok := os.LookupEnv(envKey); ok {
 				e.Val = envValue
 				e.FromEnv = true
-				e.EnvVar = val
+				e.SecretVar = val
 				e.FromVault = false
 				e.VaultRef = ""
 				return nil
 			}
 			e.Val = ""
 			e.FromEnv = true
-			e.EnvVar = val
+			e.SecretVar = val
 			e.FromVault = false
 			e.VaultRef = ""
 			return nil
 		}
 		e.Val = val
 		e.FromEnv = false
-		e.EnvVar = ""
+		e.SecretVar = ""
 		e.FromVault = false
 		e.VaultRef = ""
 		return nil
@@ -383,29 +383,29 @@ func (e *EnvVar) Scan(value any) error {
 // Value implements driver.Valuer for database storage.
 // It stores the vault reference (e.g., "vault.path/to/secret") if FromVault is true,
 // the env reference (e.g., "env.API_KEY") if FromEnv is true, otherwise the raw value.
-func (e EnvVar) Value() (driver.Value, error) {
+func (e SecretVar) Value() (driver.Value, error) {
 	if e.FromVault {
 		return e.VaultRef, nil
 	}
 	if e.FromEnv {
-		return e.EnvVar, nil
+		return e.SecretVar, nil
 	}
 	return e.Val, nil
 }
 
 // IsFromEnv returns true if the value is sourced from an environment variable.
-func (e *EnvVar) IsFromEnv() bool {
+func (e *SecretVar) IsFromEnv() bool {
 	if e == nil {
 		return false
 	}
 	return e.FromEnv
 }
 
-// ShouldPreserveStored returns true when the EnvVar is a client-side placeholder
+// ShouldPreserveStored returns true when the SecretVar is a client-side placeholder
 // that should not overwrite the stored credential. Returns true for a nil receiver,
 // an empty non-env/non-vault value, or a redacted non-env/non-vault value. Returns
 // false for env/vault references (always intentional) and plain non-empty values.
-func (e *EnvVar) ShouldPreserveStored() bool {
+func (e *SecretVar) ShouldPreserveStored() bool {
 	if e == nil {
 		return true
 	}
@@ -415,11 +415,11 @@ func (e *EnvVar) ShouldPreserveStored() bool {
 	return e.GetValue() == "" || e.IsRedacted()
 }
 
-// IsSet returns true if the EnvVar has a resolved value or an environment variable
+// IsSet returns true if the SecretVar has a resolved value or an environment variable
 // or vault reference. This should be used instead of GetValue() != "" when checking
 // whether a field was configured, because references may have an empty Val before
 // resolution (e.g., when the env var is not set in the current environment).
-func (e *EnvVar) IsSet() bool {
+func (e *SecretVar) IsSet() bool {
 	if e == nil {
 		return false
 	}
@@ -427,13 +427,13 @@ func (e *EnvVar) IsSet() bool {
 		return e.VaultRef != ""
 	}
 	if e.IsFromEnv() {
-		return e.EnvVar != ""
+		return e.SecretVar != ""
 	}
 	return e.Val != ""
 }
 
 // GetValue returns the resolved value.
-func (e *EnvVar) GetValue() string {
+func (e *SecretVar) GetValue() string {
 	if e == nil {
 		return ""
 	}
@@ -441,7 +441,7 @@ func (e *EnvVar) GetValue() string {
 }
 
 // GetValuePtr returns a pointer to the value.
-func (e *EnvVar) GetValuePtr() *string {
+func (e *SecretVar) GetValuePtr() *string {
 	if e == nil {
 		return nil
 	}
@@ -449,7 +449,7 @@ func (e *EnvVar) GetValuePtr() *string {
 }
 
 // CoerceInt coerces value to int
-func (e *EnvVar) CoerceInt(defaultValue int) int {
+func (e *SecretVar) CoerceInt(defaultValue int) int {
 	if e == nil {
 		return defaultValue
 	}
@@ -461,7 +461,7 @@ func (e *EnvVar) CoerceInt(defaultValue int) int {
 }
 
 // CoerceBool coerces value to bool
-func (e *EnvVar) CoerceBool(defaultValue bool) bool {
+func (e *SecretVar) CoerceBool(defaultValue bool) bool {
 	if e == nil {
 		return defaultValue
 	}
