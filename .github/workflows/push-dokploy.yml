@@ -83,6 +83,7 @@ jobs:
           SSH_KEY: ${{ secrets.DOKPLOY_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.DOKPLOY_KNOWN_HOSTS }}
         run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
           install -m 600 /dev/null ~/.ssh/dokploy_key
           printf '%s\n' "$SSH_KEY" >~/.ssh/dokploy_key
           printf '%s\n' "$KNOWN_HOSTS" >~/.ssh/known_hosts
