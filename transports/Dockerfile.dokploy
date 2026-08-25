@@ -1,0 +1,32 @@
+# Dockerfile.dokploy - Production overlay for the Dokploy deployment
+# (bifrost01.adiskandar.com).
+#
+# Adds nodejs + claude-code CLI + su-exec privilege drop on top of the
+# repo-built base image, replicating the customizations that previously
+# lived in the Dokploy compose file's dockerfile_inline section.
+#
+# The base image must be built first from the working tree via
+# transports/Dockerfile.local (go-workspace build - see Makefile note on the
+# stale-layer incident with the plain Dockerfile on unpublished branches):
+#
+#   docker build -f transports/Dockerfile.local \
+#     --build-arg VERSION=<sha> -t bifrost-base:amd64 .
+#   docker build -f transports/Dockerfile.dokploy \
+#     --build-arg BASE=bifrost-base:amd64 -t bifrost-dokploy:incoming .
+#
+# Deployed by .github/workflows/push-dokploy.yml - see that workflow for the
+# full pipeline (build -> docker save | ssh docker load -> compose up).
+ARG BASE=bifrost-base:amd64
+FROM ${BASE}
+
+USER root
+
+# Keep the claude-code pin in sync with the version previously pinned in the
+# Dokploy compose dockerfile_inline when bumping.
+RUN apk add --no-cache nodejs npm su-exec
+RUN npm install -g @anthropic-ai/claude-code@2.1.207
+
+# Drop back to the unprivileged runtime user the same way the old inline
+# build did: run as root, then su-exec to uid 1000 before the entrypoint.
+ENTRYPOINT ["/bin/sh", "-c", "exec su-exec 1000:0 /app/docker-entrypoint.sh", "--"]
+CMD ["/app/main"]
