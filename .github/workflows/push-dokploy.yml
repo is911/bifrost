@@ -1,0 +1,105 @@
+name: push-dokploy
+
+# Deploys the fork's code to the Dokploy-hosted Bifrost instance at
+# bifrost01.adiskandar.com. Builds the linux/amd64 image from the working
+# tree (transports/Dockerfile.local go-workspace build + Dockerfile.dokploy
+# overlay), then ships it with `docker save | ssh docker load` and recreates
+# the container. No registry involved: the server is the image store.
+#
+# Triggers:
+#   - push to dev (the rebase result auto-deploys)
+#   - workflow_dispatch with a `ref` input, for feature-branch deploys
+#     (the ref must contain this workflow and transports/Dockerfile.dokploy)
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (branch or sha) to build and deploy"
+        required: true
+        default: "dev"
+
+# Serialize deployments; never cancel one mid `compose up`.
+concurrency:
+  group: push-dokploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      COMPOSE_PROJECT: bifrost01-compose-2wbogg
+      SSH_HOST: dokploy.adiskandar.com
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute version
+        id: meta
+        run: |
+          SHA="$(git rev-parse --short HEAD)"
+          echo "sha=$SHA" >>"$GITHUB_OUTPUT"
+          echo "version=dokploy-$(date -u +%Y%m%d)-$SHA" >>"$GITHUB_OUTPUT"
+
+      # Base image from the working tree. GHA cache (mode=max) makes
+      # incremental builds fast; VERSION bakes the sha into /health.
+      - name: Build base image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: transports/Dockerfile.local
+          platforms: linux/amd64
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+          load: true
+          tags: bifrost-base:amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Overlay via the classic builder so FROM resolves the locally loaded
+      # base image (docker-container drivers only resolve registries).
+      - name: Build dokploy overlay
+        run: |
+          docker build \
+            -f transports/Dockerfile.dokploy \
+            --build-arg BASE=bifrost-base:amd64 \
+            -t bifrost-dokploy:${{ steps.meta.outputs.sha }} \
+            -t bifrost-dokploy:incoming \
+            .
+
+      - name: Deploy to dokploy
+        env:
+          SSH_KEY: ${{ secrets.DOKPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DOKPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 600 /dev/null ~/.ssh/dokploy_key
+          printf '%s\n' "$SSH_KEY" >~/.ssh/dokploy_key
+          printf '%s\n' "$KNOWN_HOSTS" >~/.ssh/known_hosts
+
+          # The server-side authorized_keys entry is a forced command:
+          # gunzip | docker load, retag :incoming -> :latest, then
+          # docker compose -p $COMPOSE_PROJECT up -d --wait + health check.
+          # Its exit status propagates here, so a failed health check fails CI.
+          docker save bifrost-dokploy:incoming \
+            | gzip -1 \
+            | ssh -i ~/.ssh/dokploy_key -o BatchMode=yes root@"$SSH_HOST" deploy
+
+      - name: Deployment summary
+        run: |
+          cat >>"$GITHUB_STEP_SUMMARY" <<EOF
+          ### Deployed to bifrost01.adiskandar.com
+          - ref: \`${{ inputs.ref || github.ref }}\`
+          - sha: \`${{ steps.meta.outputs.sha }}\`
+          - version: \`${{ steps.meta.outputs.version }}\`
+          EOF
