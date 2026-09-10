@@ -238,11 +238,13 @@ func TestAnthropicRoundTrip_BetweenToolsFallsBackToDisabled(t *testing.T) {
 	assert.Equal(t, "medium", *out.OutputConfig.Effort)
 }
 
-// Non-Claude models behind the Anthropic-shaped converter (DeepSeek, Fireworks,
-// vLLM, SGL) ignore reasoning.type: the caller's effort is honoured as usual.
+// Non-Claude models behind the Anthropic-shaped converter (Fireworks, vLLM, SGL)
+// ignore reasoning.type: the caller's effort is honoured as usual. DeepSeek is
+// excluded from this set: its Anthropic mount takes effort only and synthesizes
+// no thinking (see forwardsEffortWithoutThinkingBudget and the DeepSeek tests).
 func TestToAnthropicChatRequest_BetweenToolsIgnoredForNonClaudeModels(t *testing.T) {
-	bifrostReq := chatReq("deepseek-v4-pro", &schemas.ChatReasoning{Type: schemas.Ptr("between_tools"), Effort: schemas.Ptr("medium")}, schemas.Ptr(4096))
-	bifrostReq.Provider = schemas.DeepSeek
+	bifrostReq := chatReq("qwen3.8-27b", &schemas.ChatReasoning{Type: schemas.Ptr("between_tools"), Effort: schemas.Ptr("medium")}, schemas.Ptr(4096))
+	bifrostReq.Provider = schemas.VLLM
 	req, err := ToAnthropicChatRequest(testCtx(), bifrostReq)
 	require.NoError(t, err)
 	require.NotNil(t, req.Thinking, "effort medium must still turn thinking on")
