@@ -358,6 +358,10 @@
             "deepseek-v4-flash-anthropic": {
               "model_id": "deepseek-v4-flash",
               "use_anthropic_endpoints": true
+            },
+            "deepseek-flash-anthropic": {
+              "model_id": "deepseek-flash",
+              "use_anthropic_endpoints": true
             }
           }
         }
