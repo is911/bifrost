@@ -201,6 +201,9 @@ type ProviderFeatureSupport struct {
 	// Studio honors output_config.effort as an undocumented passthrough to its
 	// OpenAI-dialect backend, whose per-model reasoning_effort ladder is documented
 	// on the Model Studio model page (live-verified 2026-08-23).
+	// D = https://api-docs.deepseek.com/guides/anthropic_api — "output_config: Only
+	// effort is supported"; out-of-enum values (medium, xhigh) map server-side to
+	// high per the thinking-mode guide, so values forward verbatim like Zhipu's.
 	OutputConfigEffort bool
 }
 
@@ -341,6 +344,15 @@ var ProviderFeatures = map[schemas.ModelProvider]ProviderFeatureSupport{
 		ServiceTier:    true,
 		FallbackCredit: true, // fallback credit is documented on Microsoft Foundry
 	},
+	// DeepSeek's Anthropic mount (api.deepseek.com/anthropic). Cite:
+	// D = https://api-docs.deepseek.com/guides/anthropic_api,
+	//     https://api-docs.deepseek.com/guides/thinking_mode (verified 2026-09-10).
+	// Per D: thinking is "Supported (budget_tokens is ignored)" and output_config
+	// "Only effort is supported" — low/high/max are honored directly, medium and
+	// xhigh are mapped server-side (medium/xhigh→high), identical for
+	// deepseek-v4-flash and deepseek-v4-pro. Thinking defaults to enabled, with
+	// default effort high; temperature/top_p are accepted but ignored while
+	// thinking is on.
 	schemas.DeepSeek: {
 		WebSearch:              true,
 		WebSearchDynamic:       true,
@@ -355,6 +367,7 @@ var ProviderFeatures = map[schemas.ModelProvider]ProviderFeatureSupport{
 		StructuredOutputs:      true,
 		InterleavedThinking:    true,
 		ServiceTier:            true,
+		OutputConfigEffort:     true,
 	},
 	// Alibaba Cloud Model Studio / Kimi / Zhipu Anthropic-compatible mounts:
 	// start fail-closed (all Anthropic server-side features off). Enable flags

@@ -353,7 +353,13 @@
           "value": "env.DEEPSEEK_API_KEY",
           "weight": 1,
           "models": ["*"],
-          "use_for_batch_api": false
+          "use_for_batch_api": false,
+          "aliases": {
+            "deepseek-v4-flash-anthropic": {
+              "model_id": "deepseek-v4-flash",
+              "use_anthropic_endpoints": true
+            }
+          }
         }
       ],
       "network_config": {
