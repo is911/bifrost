@@ -21,6 +21,14 @@ interface Props {
 	onChange: (next: Record<string, AliasConfig>) => void;
 	providerName: string;
 	disabled?: boolean;
+	// For custom providers, the underlying base provider type (e.g. "zhipu").
+	// Drives provider-specific deployment sections; providerName stays the real
+	// name for model lookup and display. Defaults to providerName.
+	baseProviderType?: string;
+	// True when the provider's base URL cannot authenticate against its
+	// Anthropic-compatible mount (currently Zhipu General API) — blocks the
+	// per-deployment "Use Anthropic endpoints" override from being set to On.
+	anthropicEndpointsDisabled?: boolean;
 }
 
 interface Row {
@@ -138,6 +146,7 @@ function TriStateOverrideRow({
 	value,
 	onChange,
 	disabled,
+	disableOn,
 	testId,
 }: {
 	label: string;
@@ -145,6 +154,10 @@ function TriStateOverrideRow({
 	value: boolean | undefined;
 	onChange: (next: boolean | undefined) => void;
 	disabled?: boolean;
+	// Block the On choice (used when the provider's endpoint mode can't
+	// authenticate against the Anthropic mount) while still allowing remediation
+	// of a previously persisted On via Inherit/Off.
+	disableOn?: boolean;
 	testId?: string;
 }) {
 	const { t } = useTranslation("models");
@@ -166,9 +179,9 @@ function TriStateOverrideRow({
 					<SelectValue />
 				</SelectTrigger>
 				<SelectContent>
-					<SelectItem value="inherit">{t("providers.deployments.useKeySetting")}</SelectItem>
-					<SelectItem value="on">{t("providers.deployments.on")}</SelectItem>
-					<SelectItem value="off">{t("providers.deployments.off")}</SelectItem>
+						<SelectItem value="inherit">{t("providers.deployments.useKeySetting")}</SelectItem>
+						<SelectItem value="on" disabled={disableOn}>{t("providers.deployments.on")}</SelectItem>
+						<SelectItem value="off">{t("providers.deployments.off")}</SelectItem>
 				</SelectContent>
 			</Select>
 		</div>
@@ -434,7 +447,13 @@ function ReplicateSection({ config, onChange, disabled }: ProviderSectionProps) 
 	);
 }
 
-function UseAnthropicEndpointsToggleSection({ config, onChange, disabled, providerName }: ProviderSectionProps & { providerName: string }) {
+function UseAnthropicEndpointsToggleSection({
+	config,
+	onChange,
+	disabled,
+	providerName,
+	anthropicEndpointsDisabled,
+}: ProviderSectionProps & { providerName: string; anthropicEndpointsDisabled?: boolean }) {
 	const { t } = useTranslation("models");
 	return (
 		<div className="space-y-4">
@@ -443,19 +462,33 @@ function UseAnthropicEndpointsToggleSection({ config, onChange, disabled, provid
 				description={t("providers.deployments.overrideDefaultsShort", { provider: providerName })}
 			/>
 			<TriStateOverrideRow
-				label={t("providers.deployments.useAnthropicEndpoints")}
-				hint={t("providers.deployments.useAnthropicEndpointsHint")}
+					label={t("providers.deployments.useAnthropicEndpoints")}
+					hint={
+						anthropicEndpointsDisabled
+							? "On requires a GLM Coding Plan base URL — the Anthropic-compatible endpoint rejects General API keys. A previously persisted On can still be changed to Use key setting or Off."
+							: t("providers.deployments.useAnthropicEndpointsHint")
+					}
 				value={config.use_anthropic_endpoints}
 				onChange={(next) => onChange({ use_anthropic_endpoints: next })}
 				disabled={disabled}
+				disableOn={anthropicEndpointsDisabled}
 				testId="deployment-use-anthropic-endpoints"
 			/>
 		</div>
 	);
 }
 
-function ProviderSection({ providerName, ...props }: ProviderSectionProps & { providerName: string }) {
-	switch (providerName) {
+function ProviderSection({
+	providerName,
+	baseProviderType,
+	anthropicEndpointsDisabled,
+	...props
+}: ProviderSectionProps & { providerName: string; baseProviderType?: string; anthropicEndpointsDisabled?: boolean }) {
+	// Provider-specific sections key off the base provider type so custom
+	// providers (e.g. "my-glm" on the zhipu base) get the right controls;
+	// providerName remains the real name for display and model lookup.
+	const effectiveProvider = baseProviderType ?? providerName;
+	switch (effectiveProvider) {
 		case "azure":
 			return <AzureSection {...props} />;
 		case "vertex":
@@ -474,6 +507,12 @@ function ProviderSection({ providerName, ...props }: ProviderSectionProps & { pr
 			return <UseAnthropicEndpointsToggleSection providerName="Fireworks" {...props} />;
 		case "vllm":
 			return <UseAnthropicEndpointsToggleSection providerName="vLLM" {...props} />;
+		case "alibaba":
+			return <UseAnthropicEndpointsToggleSection providerName="Alibaba Cloud" {...props} />;
+		case "kimi":
+			return <UseAnthropicEndpointsToggleSection providerName="Kimi" {...props} />;
+		case "zhipu":
+			return <UseAnthropicEndpointsToggleSection providerName="Zhipu AI" {...props} />;
 		default:
 			return null;
 	}
@@ -484,11 +523,15 @@ function ExpandedConfigPanel({
 	onChange,
 	providerName,
 	disabled,
+	baseProviderType,
+	anthropicEndpointsDisabled,
 }: {
 	config: AliasConfig;
 	onChange: (patch: Partial<AliasConfig>) => void;
 	providerName: string;
 	disabled?: boolean;
+	baseProviderType?: string;
+	anthropicEndpointsDisabled?: boolean;
 }) {
 	const { t } = useTranslation("models");
 	return (
@@ -534,12 +577,19 @@ function ExpandedConfigPanel({
 					/>
 				</FieldRow>
 			</div>
-			<ProviderSection providerName={providerName} config={config} onChange={onChange} disabled={disabled} />
+			<ProviderSection
+				providerName={providerName}
+				baseProviderType={baseProviderType}
+				anthropicEndpointsDisabled={anthropicEndpointsDisabled}
+				config={config}
+				onChange={onChange}
+				disabled={disabled}
+			/>
 		</div>
 	);
 }
 
-export function DeploymentsTable({ value, onChange, providerName, disabled = false }: Props) {
+export function DeploymentsTable({ value, onChange, providerName, disabled = false, baseProviderType, anthropicEndpointsDisabled }: Props) {
 	const { t } = useTranslation("models");
 	const { t: tc } = useTranslation("common");
 	const normalized = useMemo(() => normalize(value), [value]);
@@ -728,6 +778,8 @@ export function DeploymentsTable({ value, onChange, providerName, disabled = fal
 										onChange={(patch) => patchConfig(row.name, patch)}
 										providerName={providerName}
 										disabled={disabled}
+										baseProviderType={baseProviderType}
+										anthropicEndpointsDisabled={anthropicEndpointsDisabled}
 									/>
 								</CollapsibleContent>
 							</div>
@@ -777,7 +829,14 @@ export function DeploymentsTable({ value, onChange, providerName, disabled = fal
 								<p className="text-muted-foreground px-4 pb-2 text-xs">{t("providers.deployments.draftIncomplete")}</p>
 							)}
 						<CollapsibleContent>
-							<ExpandedConfigPanel config={draftRow.config} onChange={patchDraftConfig} providerName={providerName} disabled={disabled} />
+							<ExpandedConfigPanel
+								config={draftRow.config}
+								onChange={patchDraftConfig}
+								providerName={providerName}
+								disabled={disabled}
+								baseProviderType={baseProviderType}
+								anthropicEndpointsDisabled={anthropicEndpointsDisabled}
+							/>
 						</CollapsibleContent>
 					</div>
 				</Collapsible>

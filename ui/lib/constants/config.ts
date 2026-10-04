@@ -73,6 +73,9 @@ export const ModelPlaceholders = {
 	cloudflare: "e.g. @cf/meta/llama-4-scout-17b-16e-instruct, @cf/baai/bge-large-en-v1.5",
 	"github-copilot": "e.g. gpt-5.5, claude-sonnet-4-6",
 	typesafe: "e.g. jev-1.13.0, jev-latest, jev-preview",
+	alibaba: "e.g. qwen3.8-max, qwen3.7-plus, qwen3.6-flash, text-embedding-v4",
+	kimi: "e.g. kimi-k3, kimi-k2.6, k3 (Kimi Code)",
+	zhipu: "e.g. glm-5.2, glm-4.7, glm-4.7-flash",
 };
 
 export const isKeyRequiredByProvider: Record<ProviderName, boolean> = {
@@ -113,6 +116,9 @@ export const isKeyRequiredByProvider: Record<ProviderName, boolean> = {
 	cloudflare: true,
 	"github-copilot": true,
 	typesafe: true,
+	alibaba: true,
+	kimi: true,
+	zhipu: true,
 };
 
 export const DefaultNetworkConfig = {

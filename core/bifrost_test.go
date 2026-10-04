@@ -23,6 +23,7 @@ import (
 	"github.com/maximhq/bifrost/core/keyselectors"
 	"github.com/maximhq/bifrost/core/mcp"
 	mistralprovider "github.com/maximhq/bifrost/core/providers/mistral"
+	openai "github.com/maximhq/bifrost/core/providers/openai"
 	providerUtils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/tidwall/gjson"
@@ -598,6 +599,43 @@ func TestCreateBaseProvider_CustomTypesafeBase(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "unsupported base provider type") {
 		t.Fatalf("vertex is not a supported base provider, got err=%v", err)
+	}
+}
+
+// TestCreateBaseProvider_CustomKimiNameStaysCustom pins the startup path for a
+// stored custom provider whose name has since become a standard provider: the
+// stored CustomProviderConfig wins, so the provider keeps its keys and settings
+// and is built on its declared base (openai) instead of being converted into the
+// native kimi provider. A stock kimi config (no CustomProviderConfig) still
+// builds the native provider.
+func TestCreateBaseProvider_CustomKimiNameStaysCustom(t *testing.T) {
+	bifrost := &Bifrost{logger: NewDefaultLogger(schemas.LogLevelError)}
+	network := schemas.NetworkConfig{BaseURL: "http://127.0.0.1:1", DefaultRequestTimeoutInSeconds: 1}
+
+	customCfg := &schemas.ProviderConfig{
+		NetworkConfig: network,
+		CustomProviderConfig: &schemas.CustomProviderConfig{
+			BaseProviderType: schemas.OpenAI,
+		},
+	}
+	customProvider, err := bifrost.createBaseProvider(schemas.Kimi, customCfg)
+	if err != nil {
+		t.Fatalf("stored custom kimi must build on its declared base: %v", err)
+	}
+	if customCfg.CustomProviderConfig.CustomProviderKey != string(schemas.Kimi) {
+		t.Fatalf("expected custom provider key %q, got %q", schemas.Kimi, customCfg.CustomProviderConfig.CustomProviderKey)
+	}
+	if _, ok := customProvider.(*openai.OpenAIProvider); !ok {
+		t.Fatalf("stored custom kimi must keep its openai base, got %T", customProvider)
+	}
+	if got := customProvider.GetProviderKey(); got != schemas.Kimi {
+		t.Fatalf("custom provider must answer to its stored name %q, got %q", schemas.Kimi, got)
+	}
+
+	// kimi is deliberately not a standard provider (production stores it as a
+	// custom provider), so a stock kimi config must not build a native provider.
+	if _, err := bifrost.createBaseProvider(schemas.Kimi, &schemas.ProviderConfig{NetworkConfig: network}); err == nil || !strings.Contains(err.Error(), "unsupported provider") {
+		t.Fatalf("stock kimi must be rejected as unsupported, got err=%v", err)
 	}
 }
 

@@ -1225,3 +1225,13 @@ func TestFallbackAttemptOfPrefersNestedErrorType(t *testing.T) {
 		})
 	}
 }
+
+// TestKimiIsNotAStandardProvider pins the production compatibility decision:
+// kimi is provisioned as a custom provider (base_provider_type: openai) in the
+// field, so it must not be a member of StandardProviders. If it were, the
+// config API would reject updates to that stored custom provider.
+func TestKimiIsNotAStandardProvider(t *testing.T) {
+	if IsStandardProvider(schemas.Kimi) {
+		t.Fatal("kimi must not be a standard provider: production stores a custom provider named kimi")
+	}
+}

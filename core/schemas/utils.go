@@ -113,8 +113,17 @@ func ParseModelString(model string, defaultProvider ModelProvider) (ModelProvide
 	// Check if model contains a provider prefix (only split on first "/" to preserve model names with "/")
 	if strings.Contains(model, "/") {
 		parts := strings.SplitN(model, "/", 2)
-		if len(parts) == 2 && IsKnownProvider(parts[0]) {
-			return ModelProvider(parts[0]), parts[1]
+		if len(parts) == 2 {
+			if IsKnownProvider(parts[0]) {
+				return ModelProvider(parts[0]), parts[1]
+			}
+			// A custom provider's own name is not in StandardProviders, but a
+			// request already routed to defaultProvider that carries its own
+			// "provider/model" prefix must still have it stripped so model-level
+			// shaping (e.g. Kimi reasoning routing) sees the bare model.
+			if defaultProvider != "" && ModelProvider(parts[0]) == defaultProvider {
+				return defaultProvider, parts[1]
+			}
 		}
 	}
 	// No known provider prefix found, return default provider and the original model

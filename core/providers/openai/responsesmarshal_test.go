@@ -201,6 +201,12 @@ func TestNormalizeOpenAIReasoningEffort(t *testing.T) {
 		{"sgl preserves xhigh", schemas.SGL, "qwen/qwen3.8-27b", "xhigh", "xhigh"},
 		{"custom openai-compatible provider preserves xhigh", schemas.ModelProvider("gpustack-rtxpro-6000"), "qwen/qwen3.8-27b", "xhigh", "xhigh"},
 		{"openai still downgrades xhigh on qwen-named models", schemas.OpenAI, "qwen/qwen3.8-27b", "xhigh", "high"},
+		{"qwen3.8-max keeps xhigh", schemas.Alibaba, "qwen3.8-max", "xhigh", "xhigh"},
+		{"qwen3.8-max downgrades max to xhigh", schemas.Alibaba, "qwen3.8-max", "max", "xhigh"},
+		{"provider-prefixed qwen3.8-max downgrades max to xhigh", schemas.Alibaba, "alibaba/qwen3.8-max", "max", "xhigh"},
+		{"qwen3.8-max keeps medium", schemas.Alibaba, "qwen3.8-max", "medium", "medium"},
+		{"qwen3.8-max downgrades minimal to low", schemas.Alibaba, "qwen3.8-max", "minimal", "low"},
+		{"kimi-k3 keeps max", schemas.Kimi, "kimi-k3", "max", "max"},
 	}
 
 	for _, tt := range tests {

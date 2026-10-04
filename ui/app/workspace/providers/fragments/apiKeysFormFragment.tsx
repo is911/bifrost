@@ -12,10 +12,10 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TagInput } from "@/components/ui/tagInput";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { isRedacted } from "@/lib/utils/validation";
+import { hasCopilotApiToken, isRedacted } from "@/lib/utils/validation";
 import { Info } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Control, UseFormReturn } from "react-hook-form";
+import { Control, UseFormReturn, useWatch } from "react-hook-form";
 import { Trans, useTranslation } from "react-i18next";
 import { DeploymentsTable } from "./deploymentsTable";
 import { GithubCopilotSignIn } from "./githubCopilotSignIn";
@@ -33,6 +33,9 @@ interface Props {
 	// For custom providers, the underlying base provider type (e.g. "bedrock").
 	// Drives which credential UI renders; falls back to providerName for native providers.
 	baseProviderType?: string;
+	// The provider's configured network base URL (empty = provider default). Some
+	// per-provider toggles are only valid for specific upstream endpoint modes.
+	providerBaseURL?: string;
 	form: UseFormReturn<any>;
 }
 
@@ -153,7 +156,7 @@ function VPCEndpointsFormField({
 	);
 }
 
-export function ApiKeyFormFragment({ control, providerName, baseProviderType, form }: Props) {
+export function ApiKeyFormFragment({ control, providerName, baseProviderType, providerBaseURL, form }: Props) {
 	const { t } = useTranslation("models");
 	// Credential UI keys off the base provider type for custom providers; the
 	// model list, deployments table, and API calls still use the real providerName.
@@ -178,8 +181,24 @@ export function ApiKeyFormFragment({ control, providerName, baseProviderType, fo
 	// anthropic, and every custom provider built on the anthropic base, may federate its credential
 	// through anthropic_key_config.workload_identity instead of carrying a static API key.
 	const isAnthropic = effectiveProvider === "anthropic";
+	// Reactive, so the App-credential labels stay truthful. Once a Copilot token is present
+	// those fields genuinely are optional, and a static "(Required)" would contradict the
+	// section note telling the operator they can leave them blank.
+	const copilotAppSuffix = hasCopilotApiToken(form.watch("key.value")) ? "(Optional)" : "(Required)";
+	const isAlibaba = effectiveProvider === "alibaba";
+	const isKimi = effectiveProvider === "kimi";
+	const isZhipu = effectiveProvider === "zhipu";
 	const isKeylessProvider = isOllama || isSGL;
 	const supportsBatchAPI = BATCH_SUPPORTED_PROVIDERS.includes(effectiveProvider);
+
+	// Zhipu's Anthropic-compatible mount (…/api/anthropic) only authenticates GLM
+	// Coding Plan credentials. The provider default and every General API /paas/v4
+	// host derive the mount URL but get a 401 per request, so the Anthropic-endpoint
+	// toggles are gated to Coding Plan base URLs. Explicit exotic base URLs stay
+	// available (the backend derives <base>/anthropic for them).
+	const zhipuBaseURL = (providerBaseURL ?? "").trim().replace(/\/+$/, "");
+	const isZhipuCodingPlanBaseURL = zhipuBaseURL.endsWith("/coding/paas/v4");
+	const isZhipuGeneralAPIBaseURL = isZhipu && !isZhipuCodingPlanBaseURL && (zhipuBaseURL === "" || zhipuBaseURL.endsWith("/paas/v4"));
 
 	// Auth type state for Azure: 'api_key', 'entra_id', or 'default_credential'
 	const [azureAuthType, setAzureAuthType] = useState<"api_key" | "entra_id" | "default_credential">("api_key");
@@ -266,6 +285,19 @@ export function ApiKeyFormFragment({ control, providerName, baseProviderType, fo
 		// happens once the key resolves - after this effect has already run once against
 		// an empty form and settled on the personal access token tab.
 	}, [isDatabricks, form, databricksDefaults]);
+	// A Zhipu General API base URL can never authenticate against the Anthropic
+	// mount, so a previously persisted toggle is cleared once the (possibly
+	// async) form.reset values arrive. Watching the field (instead of reading it
+	// in a one-shot mount effect) re-runs after reset populates edit values, and
+	// shouldDirty marks the correction saveable so Save is enabled.
+	const useAnthropicEndpoints = useWatch({ control, name: "key.use_anthropic_endpoints" });
+	useEffect(() => {
+		if (!isZhipuGeneralAPIBaseURL) return;
+		if (form.formState.isDirty) return;
+		if (useAnthropicEndpoints) {
+			form.setValue("key.use_anthropic_endpoints", false, { shouldDirty: true });
+		}
+	}, [isZhipuGeneralAPIBaseURL, useAnthropicEndpoints, form]);
 
 	const oauthDefaults = form.formState.defaultValues?.key?.oauth_key_config;
 	useEffect(() => {
@@ -543,6 +575,8 @@ export function ApiKeyFormFragment({ control, providerName, baseProviderType, fo
 								<div data-testid="apikey-deployments-table">
 									<DeploymentsTable
 										providerName={providerName}
+										baseProviderType={baseProviderType}
+										anthropicEndpointsDisabled={isZhipuGeneralAPIBaseURL}
 										value={field.value}
 										onChange={(next) => {
 											form.clearErrors("key.aliases");
@@ -1881,7 +1915,7 @@ export function ApiKeyFormFragment({ control, providerName, baseProviderType, fo
 					</div>
 				</div>
 			)}
-			{(isSGL || isDeepseek || isFireworks || isVLLM) && (
+			{(isSGL || isDeepseek || isFireworks || isVLLM || isAlibaba || isKimi || isZhipu) && (
 				<div className="space-y-4">
 					<FormField
 						control={control}
@@ -1889,14 +1923,20 @@ export function ApiKeyFormFragment({ control, providerName, baseProviderType, fo
 						render={({ field }) => (
 							<FormItem className="flex flex-row items-center justify-between rounded-sm border p-2">
 								<div className="space-y-1.5">
-									<FormLabel htmlFor="use-anthropic-endpoints-alias-override-switch">{t("providers.keys.useAnthropicEndpoints")}</FormLabel>
-									<FormDescription>{t("providers.keys.useAnthropicEndpointsHelp")}</FormDescription>
+										<FormLabel htmlFor="use-anthropic-endpoints-alias-override-switch">{t("providers.keys.useAnthropicEndpoints")}</FormLabel>
+										<FormDescription>
+											{isZhipuGeneralAPIBaseURL
+												? "Requires a GLM Coding Plan base URL (…/api/coding/paas/v4). The Anthropic-compatible endpoint rejects General API keys."
+												: t("providers.keys.useAnthropicEndpointsHelp")}
+										</FormDescription>
 								</div>
 								<FormControl>
 									<Switch
 										id="use-anthropic-endpoints-alias-override-switch"
 										checked={field.value ?? false}
 										onCheckedChange={field.onChange}
+										disabled={isZhipuGeneralAPIBaseURL}
+										data-testid="key-use-anthropic-endpoints-switch"
 									/>
 								</FormControl>
 							</FormItem>

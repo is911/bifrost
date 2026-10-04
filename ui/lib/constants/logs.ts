@@ -40,6 +40,9 @@ export const KnownProvidersNames = [
 	"cloudflare",
 	"github-copilot",
 	"typesafe",
+	"alibaba",
+	"kimi",
+	"zhipu",
 ] as const;
 
 // Local Provider type derived from KNOWN_PROVIDERS constant
@@ -51,7 +54,7 @@ export const ProviderNames: readonly ProviderName[] = KnownProvidersNames;
 // "Add Provider" picker and the first-party-integration nudge so users cannot configure
 // them from the UI. Everything else (types, schemas, icons, labels) still resolves, so a
 // provider configured via config.json continues to render correctly.
-export const HiddenProviders: ReadonlySet<ProviderName> = new Set<ProviderName>([]);
+export const HiddenProviders: ReadonlySet<ProviderName> = new Set<ProviderName>(["kimi"]);
 
 // Known providers that users can add from the UI.
 export const VisibleProviderNames: readonly ProviderName[] = KnownProvidersNames.filter((name) => !HiddenProviders.has(name));
@@ -59,6 +62,7 @@ export const VisibleProviderNames: readonly ProviderName[] = KnownProvidersNames
 // Built-in providers whose Bifrost implementation supports embedding requests.
 // Custom providers must instead be checked via custom_provider_config.allowed_requests.embedding.
 export const EmbeddingSupportedProviders: readonly ProviderName[] = [
+	"alibaba",
 	"azure",
 	"bedrock",
 	"cohere",
@@ -198,6 +202,9 @@ export const ProviderLabels: Record<ProviderName, string> = {
 	cloudflare: "Cloudflare",
 	"github-copilot": "GitHub Copilot",
 	typesafe: "TypeSafe",
+	alibaba: "Alibaba Cloud",
+	kimi: "Kimi",
+	zhipu: "Zhipu AI",
 } as const;
 
 // Helper function to get provider label, supporting custom providers
