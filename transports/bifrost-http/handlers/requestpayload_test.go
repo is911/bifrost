@@ -15,6 +15,7 @@ import (
 	providerUtils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/framework/configstore"
+	"github.com/maximhq/bifrost/transports/v2/bifrost-http/lib"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/valyala/fasthttp"
@@ -1014,4 +1015,30 @@ func keysOf(m map[string]any) []string {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+// TestChatPassthroughTopLevelFieldsSurvivePrep pins the generic /v1/chat/completions
+// path: body-root fields Bifrost does not model are retained as ExtraParams, the
+// reasoning shorthand stays typed, and the passthrough header enables the merge.
+func TestChatPassthroughTopLevelFieldsSurvivePrep(t *testing.T) {
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
+	ctx.Request.SetRequestURI("/v1/chat/completions")
+	ctx.Request.Header.SetContentType("application/json")
+	ctx.Request.Header.Set("x-bf-passthrough-extra-params", "true")
+	ctx.Request.SetBodyString(`{"model":"deepseek/deepseek-flash","max_completion_tokens":1024,"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"max","thinking":{"type":"enabled"},"clear_thinking":false}`)
+
+	_, bifrostReq, err := prepareChatCompletionRequest(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, bifrostReq.Params.Reasoning)
+	require.NotNil(t, bifrostReq.Params.Reasoning.Effort)
+	assert.Equal(t, schemas.ReasoningEffortMax, *bifrostReq.Params.Reasoning.Effort)
+	thinking, ok := bifrostReq.Params.ExtraParams["thinking"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "enabled", thinking["type"])
+	assert.Contains(t, bifrostReq.Params.ExtraParams, "clear_thinking")
+
+	bifrostCtx, cancel := lib.ConvertToBifrostContext(ctx, nil)
+	defer cancel()
+	assert.Equal(t, true, bifrostCtx.Value(schemas.BifrostContextKeyPassthroughExtraParams))
 }

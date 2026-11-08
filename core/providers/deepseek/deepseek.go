@@ -3,6 +3,7 @@ package deepseek
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"strings"
 	"time"
@@ -85,6 +86,12 @@ func applyDeepSeekThinkingCompatibility(request *schemas.BifrostChatRequest) *sc
 	if !requiresDeepSeekThinkingDisabled(request) {
 		return request
 	}
+	// An explicit caller-owned thinking block is authoritative. If it conflicts
+	// with this gate, let the provider return its error instead of silently
+	// flipping the caller to non-thinking mode.
+	if _, ok := request.Params.ExtraParams["thinking"]; ok {
+		return request
+	}
 
 	paramsCopy := *request.Params
 	extraParams := make(map[string]any, len(paramsCopy.ExtraParams)+1)
@@ -95,6 +102,26 @@ func applyDeepSeekThinkingCompatibility(request *schemas.BifrostChatRequest) *sc
 	requestCopy := *request
 	requestCopy.Params = &paramsCopy
 	return &requestCopy
+}
+
+// validateDeepSeekReasoningEffort enforces DeepSeek's documented effort set before
+// egress. The API accepts none, minimal, low, medium, high, xhigh and max; minimal,
+// medium and xhigh are compatibility aliases that DeepSeek maps itself. Preserving
+// these values avoids a silent local clamp (notably max -> high/xhigh).
+func validateDeepSeekReasoningEffort(request *schemas.BifrostChatRequest) *schemas.BifrostError {
+	if request == nil || request.Params == nil || request.Params.Reasoning == nil || request.Params.Reasoning.Effort == nil {
+		return nil
+	}
+	effort := *request.Params.Reasoning.Effort
+	switch effort {
+	case schemas.ReasoningEffortNone, schemas.ReasoningEffortMinimal,
+		schemas.ReasoningEffortLow, schemas.ReasoningEffortMedium,
+		schemas.ReasoningEffortHigh, schemas.ReasoningEffortXHigh,
+		schemas.ReasoningEffortMax:
+		return nil
+	default:
+		return providerUtils.NewBifrostBadRequestError(fmt.Sprintf("unsupported reasoning_effort %q for DeepSeek; supported values are none, minimal, low, medium, high, xhigh, max", effort))
+	}
 }
 
 // requiresDeepSeekThinkingDisabled reports whether DeepSeek's OpenAI-compatible endpoint
@@ -315,6 +342,9 @@ func (provider *DeepSeekProvider) chatCompletion(ctx *schemas.BifrostContext, ke
 		)
 	}
 
+	if bifrostErr := validateDeepSeekReasoningEffort(request); bifrostErr != nil {
+		return nil, bifrostErr
+	}
 	ctx.SetValue(schemas.BifrostContextKeyPassthroughExtraParams, true)
 	request = applyDeepSeekThinkingCompatibility(request)
 	return openai.HandleOpenAIChatCompletionRequest(
@@ -373,6 +403,9 @@ func (provider *DeepSeekProvider) ChatCompletionStream(ctx *schemas.BifrostConte
 		)
 	}
 
+	if bifrostErr := validateDeepSeekReasoningEffort(request); bifrostErr != nil {
+		return nil, bifrostErr
+	}
 	ctx.SetValue(schemas.BifrostContextKeyPassthroughExtraParams, true)
 	request = applyDeepSeekThinkingCompatibility(request)
 	return openai.HandleOpenAIChatCompletionStreaming(

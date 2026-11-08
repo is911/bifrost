@@ -21,8 +21,15 @@ func newOpenAIChatResponse() string {
 // OpenAI-compatible chat path and returns the decoded outbound wire body.
 func captureDeepSeekChatBody(t *testing.T, request *schemas.BifrostChatRequest) map[string]any {
 	t.Helper()
+	_, captured := captureDeepSeekChatPayload(t, request)
+	return captured
+}
+
+func captureDeepSeekChatPayload(t *testing.T, request *schemas.BifrostChatRequest) ([]byte, map[string]any) {
+	t.Helper()
 
 	var captured map[string]any
+	var rawBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			t.Errorf("path = %q, want /chat/completions", r.URL.Path)
@@ -32,6 +39,7 @@ func captureDeepSeekChatBody(t *testing.T, request *schemas.BifrostChatRequest) 
 			t.Errorf("read body: %v", err)
 			return
 		}
+		rawBody = append(rawBody[:0], body...)
 		if err := json.Unmarshal(body, &captured); err != nil {
 			t.Errorf("decode body: %v", err)
 			return
@@ -51,7 +59,7 @@ func captureDeepSeekChatBody(t *testing.T, request *schemas.BifrostChatRequest) 
 	if _, bifrostErr := provider.ChatCompletion(ctx, key, request); bifrostErr != nil {
 		t.Fatalf("ChatCompletion: %v", bifrostErr.Error.Message)
 	}
-	return captured
+	return rawBody, captured
 }
 
 // assistantMessageAt returns the decoded message at index i of the wire body.
@@ -412,5 +420,135 @@ func TestChatCompletion_DoesNotMutateCallerExtraParams(t *testing.T) {
 	}
 	if _, ok := params.ExtraParams["thinking"]; ok {
 		t.Fatalf("caller ChatParameters must not be mutated, got ExtraParams=%#v", params.ExtraParams)
+	}
+}
+
+func TestChatCompletion_OpenAIEndpointPreservesExplicitReasoningControls(t *testing.T) {
+	t.Parallel()
+
+	required := string(schemas.ChatToolChoiceTypeRequired)
+	prompt := "hi"
+
+	for _, thinkingType := range []string{"enabled", "disabled"} {
+		t.Run(thinkingType, func(t *testing.T) {
+			t.Parallel()
+
+			captured := captureDeepSeekChatBody(t, &schemas.BifrostChatRequest{
+				Provider: schemas.DeepSeek,
+				Model:    "deepseek-flash",
+				Input:    []schemas.ChatMessage{{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: &prompt}}},
+				Params: &schemas.ChatParameters{
+					MaxCompletionTokens: schemas.Ptr(1024),
+					Reasoning:           &schemas.ChatReasoning{Effort: schemas.Ptr(schemas.ReasoningEffortMax)},
+					ToolChoice:          &schemas.ChatToolChoice{ChatToolChoiceStr: &required},
+					ExtraParams: map[string]any{
+						"clear_thinking": false,
+						"thinking":       map[string]any{"type": thinkingType},
+					},
+				},
+			})
+
+			if got := captured["reasoning_effort"]; got != schemas.ReasoningEffortMax {
+				t.Errorf("reasoning_effort = %v, want %q", got, schemas.ReasoningEffortMax)
+			}
+			thinking, ok := captured["thinking"].(map[string]any)
+			if !ok {
+				t.Fatalf("expected thinking block in outbound body, got %#v", captured)
+			}
+			if got := thinking["type"]; got != thinkingType {
+				t.Errorf("thinking.type = %v, want %q", got, thinkingType)
+			}
+			if got, ok := captured["clear_thinking"]; !ok || got != false {
+				t.Errorf("clear_thinking = %#v (present=%v), want false", got, ok)
+			}
+		})
+	}
+}
+
+func TestChatCompletion_OpenAIEndpointRejectsUnsupportedReasoningEffort(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("unsupported reasoning_effort must not reach upstream")
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	provider, err := newTestDeepSeekProvider(server.URL)
+	if err != nil {
+		t.Fatalf("NewDeepSeekProvider: %v", err)
+	}
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	key := schemas.Key{Value: schemas.SecretVar{Val: "test-api-key"}}
+	prompt := "hi"
+	effort := "extreme"
+	_, bifrostErr := provider.ChatCompletion(ctx, key, &schemas.BifrostChatRequest{
+		Provider: schemas.DeepSeek,
+		Model:    "deepseek-flash",
+		Input:    []schemas.ChatMessage{{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: &prompt}}},
+		Params:   &schemas.ChatParameters{Reasoning: &schemas.ChatReasoning{Effort: &effort}},
+	})
+	if bifrostErr == nil {
+		t.Fatal("expected unsupported reasoning_effort to be rejected")
+	}
+	if bifrostErr.StatusCode == nil || *bifrostErr.StatusCode != http.StatusBadRequest {
+		t.Errorf("StatusCode = %v, want 400", bifrostErr.StatusCode)
+	}
+	const want = `unsupported reasoning_effort "extreme" for DeepSeek; supported values are none, minimal, low, medium, high, xhigh, max`
+	if got := bifrostErr.Error.Message; got != want {
+		t.Errorf("message = %q, want %q", got, want)
+	}
+}
+
+func TestChatCompletion_OpenAIEndpointPreservesNoReasoningWireBody(t *testing.T) {
+	t.Parallel()
+	prompt := "hi"
+	body, _ := captureDeepSeekChatPayload(t, &schemas.BifrostChatRequest{
+		Provider: schemas.DeepSeek,
+		Model:    "deepseek-flash",
+		Input:    []schemas.ChatMessage{{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: &prompt}}},
+		Params:   &schemas.ChatParameters{MaxCompletionTokens: schemas.Ptr(1024)},
+	})
+	const want = `{"model":"deepseek-flash","max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}`
+	if string(body) != want {
+		t.Fatalf("wire body changed for a request without reasoning controls:\n got: %s\nwant: %s", body, want)
+	}
+}
+
+// BenchmarkChatCompletion_DeepSeekExplicitReasoningControls measures the full
+// native DeepSeek request path with an explicit thinking block and max effort.
+func BenchmarkChatCompletion_DeepSeekExplicitReasoningControls(b *testing.B) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, newOpenAIChatResponse())
+	}))
+	defer server.Close()
+
+	provider, err := newTestDeepSeekProvider(server.URL)
+	if err != nil {
+		b.Fatalf("NewDeepSeekProvider: %v", err)
+	}
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	key := schemas.Key{Value: schemas.SecretVar{Val: "test-api-key"}}
+	required := string(schemas.ChatToolChoiceTypeRequired)
+	prompt := "hi"
+	request := &schemas.BifrostChatRequest{
+		Provider: schemas.DeepSeek,
+		Model:    "deepseek-flash",
+		Input:    []schemas.ChatMessage{{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: &prompt}}},
+		Params: &schemas.ChatParameters{
+			Reasoning:  &schemas.ChatReasoning{Effort: schemas.Ptr(schemas.ReasoningEffortMax)},
+			ToolChoice: &schemas.ChatToolChoice{ChatToolChoiceStr: &required},
+			ExtraParams: map[string]any{
+				"thinking": map[string]any{"type": "enabled"},
+			},
+		},
+	}
+
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, bifrostErr := provider.ChatCompletion(ctx, key, request); bifrostErr != nil {
+			b.Fatalf("ChatCompletion: %v", bifrostErr.Error.Message)
+		}
 	}
 }

@@ -530,6 +530,37 @@ func (a speechTestAccount) GetConfigForProvider(p schemas.ModelProvider) (*schem
 	}, nil
 }
 
+// deepSeekChatTestAccount configures a local DeepSeek endpoint so the OpenAI-compatible
+// ingress can be exercised end to end without a live key.
+type deepSeekChatTestAccount struct {
+	baseURL string
+}
+
+func (a deepSeekChatTestAccount) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
+	return []schemas.ModelProvider{schemas.DeepSeek}, nil
+}
+
+func (a deepSeekChatTestAccount) GetKeysForProvider(_ context.Context, _ schemas.ModelProvider) ([]schemas.Key, error) {
+	return []schemas.Key{{
+		ID:     "deepseek-chat-test-key",
+		Value:  *schemas.NewSecretVar("sk-test-operator-key"),
+		Models: schemas.WhiteList{"*"},
+		Weight: 1.0,
+	}}, nil
+}
+
+func (a deepSeekChatTestAccount) GetConfigForProvider(p schemas.ModelProvider) (*schemas.ProviderConfig, error) {
+	if p != schemas.DeepSeek {
+		return nil, fmt.Errorf("unsupported provider %s", p)
+	}
+	nc := schemas.DefaultNetworkConfig
+	nc.BaseURL = a.baseURL
+	return &schemas.ProviderConfig{
+		NetworkConfig:            nc,
+		ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
+	}, nil
+}
+
 // TestOpenAISpeechRoutesReturnRawAudio pins that every OpenAI-integration speech route
 // answers with the audio bytes, as the OpenAI and Azure OpenAI SDKs expect. The Azure-style
 // /openai/deployments/{deployment}/audio/speech route used to serialize the whole
@@ -968,4 +999,38 @@ func TestRewriteOpenAIRawRequestBodyRejectsUnmappedLiteral(t *testing.T) {
 		map[string]string{"alice@example.com": "[EMAIL]"},
 	)
 	require.Error(t, err)
+}
+
+func TestDeepSeekChatPassthroughExtraParamsPreservesReasoningControls(t *testing.T) {
+	upstream := &chatUpstream{}
+	server := httptest.NewServer(upstream)
+	defer server.Close()
+
+	client, err := bifrost.Init(context.Background(), schemas.BifrostConfig{
+		Account: deepSeekChatTestAccount{baseURL: server.URL},
+		Logger:  bifrost.NewDefaultLogger(schemas.LogLevelError),
+	})
+	require.NoError(t, err)
+	defer client.Shutdown()
+
+	r := router.New()
+	identity := func(next fasthttp.RequestHandler) fasthttp.RequestHandler { return next }
+	NewOpenAIRouter(client, &mockHandlerStore{}, nil, &testLogger{}).RegisterRoutes(r, identity)
+
+	var ctx fasthttp.RequestCtx
+	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
+	ctx.Request.SetRequestURI("/openai/v1/chat/completions")
+	ctx.Request.Header.SetContentType("application/json")
+	ctx.Request.Header.Set("x-bf-passthrough-extra-params", "true")
+	ctx.Request.SetBodyString(`{"model":"deepseek/deepseek-flash","max_completion_tokens":1024,"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"max","extra_params":{"thinking":{"type":"enabled"},"clear_thinking":false}}`)
+
+	r.Handler(&ctx)
+
+	require.Equal(t, fasthttp.StatusOK, ctx.Response.StatusCode(), "body: %s", ctx.Response.Body())
+	path, body := upstream.last()
+	require.Equal(t, "/chat/completions", path)
+	require.Equal(t, "max", gjson.GetBytes(body, "reasoning_effort").String())
+	require.Equal(t, "enabled", gjson.GetBytes(body, "thinking.type").String())
+	require.True(t, gjson.GetBytes(body, "clear_thinking").Exists())
+	require.False(t, gjson.GetBytes(body, "clear_thinking").Bool())
 }

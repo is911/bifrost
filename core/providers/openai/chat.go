@@ -356,9 +356,14 @@ func (req *OpenAIChatRequest) normalizeReasoningEffort(caps schemas.ModelCaps) {
 		reasoningCopy := *req.ChatParameters.Reasoning
 		req.ChatParameters.Reasoning = &reasoningCopy
 		if req.ChatParameters.Reasoning.Effort != nil {
-			// Native field is provided, use it (and clear max_tokens)
+			// Native field is provided, use it (and clear max_tokens).
+			// DeepSeek documents none/low/high/max plus compatibility aliases;
+			// preserve them rather than clamping onto the generic ladder.
 			effort := *req.ChatParameters.Reasoning.Effort
-			req.ChatParameters.Reasoning.Effort = schemas.Ptr(normalizeReasoningEffort(req.Provider, caps, effort))
+			if req.Provider != schemas.DeepSeek {
+				effort = normalizeReasoningEffort(req.Provider, caps, effort)
+			}
+			req.ChatParameters.Reasoning.Effort = schemas.Ptr(effort)
 			// Clear max_tokens since OpenAI doesn't use it
 			req.ChatParameters.Reasoning.MaxTokens = nil
 		} else if req.ChatParameters.Reasoning.MaxTokens != nil {
@@ -374,9 +379,12 @@ func (req *OpenAIChatRequest) normalizeReasoningEffort(caps schemas.ModelCaps) {
 			req.ChatParameters.Reasoning.MaxTokens = nil
 		}
 		// A model that always reasons rejects "none"; "minimal" normalizes to its lowest level.
-		if e := req.ChatParameters.Reasoning.Effort; e != nil && *e == schemas.ReasoningEffortNone &&
-			!caps.CanDisableReasoning(defaultCanDisableReasoning(caps.Model())) {
-			req.ChatParameters.Reasoning.Effort = schemas.Ptr(caps.NormalizeReasoningEffort(schemas.ReasoningEffortMinimal, defaultEffortControl(req.Provider, caps.Model())))
+		// DeepSeek accepts "none" as a documented value, so leave it untouched there.
+		if req.Provider != schemas.DeepSeek {
+			if e := req.ChatParameters.Reasoning.Effort; e != nil && *e == schemas.ReasoningEffortNone &&
+				!caps.CanDisableReasoning(defaultCanDisableReasoning(caps.Model())) {
+				req.ChatParameters.Reasoning.Effort = schemas.Ptr(caps.NormalizeReasoningEffort(schemas.ReasoningEffortMinimal, defaultEffortControl(req.Provider, caps.Model())))
+			}
 		}
 	}
 }

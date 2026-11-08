@@ -990,6 +990,78 @@ func TestOpenAIChatRequest_FilterOpenAISpecificParameters_NormalizesReasoningEff
 	}
 }
 
+// TestFilterOpenAISpecificParameters_DeepSeekEffortPreservationDoesNotLeak pins that
+// DeepSeek accepts its documented effort labels verbatim while the pre-existing
+// normalization for OpenAI, Alibaba and Zhipu remains unchanged.
+func TestFilterOpenAISpecificParameters_DeepSeekEffortPreservationDoesNotLeak(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider schemas.ModelProvider
+		model    string
+		effort   string
+		want     string
+	}{
+		{"deepseek flash max", schemas.DeepSeek, "deepseek-flash", schemas.ReasoningEffortMax, schemas.ReasoningEffortMax},
+		{"deepseek flash medium", schemas.DeepSeek, "deepseek-flash", schemas.ReasoningEffortMedium, schemas.ReasoningEffortMedium},
+		{"deepseek flash minimal", schemas.DeepSeek, "deepseek-flash", schemas.ReasoningEffortMinimal, schemas.ReasoningEffortMinimal},
+		{"openai max still clamps", schemas.OpenAI, "gpt-5.1", schemas.ReasoningEffortMax, schemas.ReasoningEffortHigh},
+		{"alibaba max still clamps", schemas.Alibaba, "qwen3.8-max", schemas.ReasoningEffortMax, schemas.ReasoningEffortXHigh},
+		{"zhipu medium still clamps", schemas.Zhipu, "glm-5.3", schemas.ReasoningEffortMedium, schemas.ReasoningEffortHigh},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &OpenAIChatRequest{
+				Provider: tt.provider,
+				Model:    tt.model,
+				ChatParameters: schemas.ChatParameters{
+					Reasoning: &schemas.ChatReasoning{Effort: schemas.Ptr(tt.effort)},
+				},
+			}
+
+			req.filterOpenAISpecificParameters(schemas.ResolveModelCaps(tt.provider, tt.model))
+
+			require.NotNil(t, req.Reasoning)
+			require.NotNil(t, req.Reasoning.Effort)
+			require.Equal(t, tt.want, *req.Reasoning.Effort)
+		})
+	}
+}
+
+// TestToOpenAIChatRequest_CustomDeepSeekPreservesReasoningControls pins the
+// custom-provider path: when Bifrost resolves the base provider to DeepSeek, the
+// OpenAI converter must not reintroduce the generic effort clamp or drop passthrough
+// thinking controls.
+func TestToOpenAIChatRequest_CustomDeepSeekPreservesReasoningControls(t *testing.T) {
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	ctx.SetValue(schemas.BifrostContextKeyIsCustomProvider, true)
+	ctx.SetValue(schemas.BifrostContextKeyBaseProviderType, schemas.DeepSeek)
+
+	effort := schemas.ReasoningEffortMax
+	bifrostReq := &schemas.BifrostChatRequest{
+		Provider: "custom-deepseek",
+		Model:    "deepseek-flash",
+		Input:    []schemas.ChatMessage{{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("hi")}}},
+		Params: &schemas.ChatParameters{
+			Reasoning: &schemas.ChatReasoning{Effort: &effort},
+			ExtraParams: map[string]any{
+				"thinking":       map[string]any{"type": "enabled"},
+				"clear_thinking": false,
+			},
+		},
+	}
+
+	out := ToOpenAIChatRequest(ctx, bifrostReq)
+	require.NotNil(t, out)
+	require.NotNil(t, out.Reasoning)
+	require.NotNil(t, out.Reasoning.Effort)
+	require.Equal(t, schemas.ReasoningEffortMax, *out.Reasoning.Effort)
+	thinking, ok := out.ExtraParams["thinking"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "enabled", thinking["type"])
+	require.Equal(t, false, out.ExtraParams["clear_thinking"])
+}
+
 func TestToOpenAIChatRequest_PreservesPropertyOrder(t *testing.T) {
 	params := &schemas.ToolFunctionParameters{
 		Type: "object",
@@ -3264,6 +3336,28 @@ func BenchmarkToOpenAIChatRequest_DeepSeekResponseFormat(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_ = ToOpenAIChatRequest(ctx, bifrostReq)
+			}
+		})
+	}
+}
+
+// BenchmarkToOpenAIChatRequest_DeepSeekReasoningEffort isolates the converter path
+// changed by the DeepSeek effort-preservation fix, including the common no-effort arm.
+func BenchmarkToOpenAIChatRequest_DeepSeekReasoningEffort(b *testing.B) {
+	for _, effort := range []string{"", schemas.ReasoningEffortNone, schemas.ReasoningEffortMedium, schemas.ReasoningEffortMax} {
+		b.Run("effort="+effort, func(b *testing.B) {
+			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			req := &schemas.BifrostChatRequest{
+				Provider: schemas.DeepSeek,
+				Model:    "deepseek-flash",
+				Input:    []schemas.ChatMessage{{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("hi")}}},
+			}
+			if effort != "" {
+				req.Params = &schemas.ChatParameters{Reasoning: &schemas.ChatReasoning{Effort: schemas.Ptr(effort)}}
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				_ = ToOpenAIChatRequest(ctx, req)
 			}
 		})
 	}

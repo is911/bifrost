@@ -313609,6 +313609,208 @@
           ]
         }
       ]
+    },
+    {
+      "name": "323. DeepSeek explicit reasoning controls on /v1/chat/completions (deepseek-reasoning-controls)",
+      "description": "A caller on /v1/chat/completions can send provider-specific thinking and clear_thinking at the body root when x-bf-passthrough-extra-params is enabled. DeepSeek egress used to post-process these controls after the passthrough merge: the shared effort normalizer clamped reasoning_effort max to high/xhigh, and applyDeepSeekThinkingCompatibility replaced an explicit thinking:enabled with disabled whenever its forced-tool/replay safety gate fired. This folder pins the non-streaming and streaming happy paths by asserting extra_fields.raw_request, and pins the forced-tool conflict by requiring a caller-visible 4xx rather than a silent thinking flip. The conflict case is expected red before the fix because the old shim disabled thinking and returned 200.",
+      "item": [
+        {
+          "name": "deepseek/deepseek-flash /v1/chat/completions non-streaming preserves explicit thinking enabled and reasoning_effort max - deepseek-reasoning-controls",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('deepseek explicit reasoning: non-streaming returns 200', function () {",
+                  "  pm.expect(pm.response.code, 'failed: ' + pm.response.text()).to.equal(200);",
+                  "});",
+                  "if (pm.response.code !== 200) { return; }",
+                  "var j = pm.response.json();",
+                  "var rr = (j.extra_fields || {}).raw_request;",
+                  "if (typeof rr === 'string') { try { rr = JSON.parse(rr); } catch (e) { rr = null; } }",
+                  "var wire = JSON.stringify(rr || null).slice(0, 800);",
+                  "pm.test('deepseek explicit reasoning: raw_request captured', function () {",
+                  "  pm.expect(rr, 'raw_request missing: ' + pm.response.text().slice(0, 500)).to.be.an('object');",
+                  "});",
+                  "pm.test('deepseek explicit reasoning: explicit thinking survives', function () {",
+                  "  pm.expect(rr && rr.thinking && rr.thinking.type, 'thinking.type was rewritten or dropped: ' + wire).to.eql('enabled');",
+                  "});",
+                  "pm.test('deepseek explicit reasoning: max effort survives', function () {",
+                  "  pm.expect(rr && rr.reasoning_effort, 'reasoning_effort was rewritten or dropped: ' + wire).to.eql('max');",
+                  "});",
+                  "pm.test('deepseek explicit reasoning: unknown passthrough key survives', function () {",
+                  "  pm.expect(rr && rr.clear_thinking, 'clear_thinking was rewritten or dropped: ' + wire).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-bf-passthrough-extra-params",
+                "value": "true"
+              },
+              {
+                "key": "x-bf-send-back-raw-request",
+                "value": "true"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"deepseek/deepseek-flash\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Reply with the single word OK.\"\n    }\n  ],\n  \"thinking\": {\n    \"type\": \"enabled\"\n  },\n  \"reasoning_effort\": \"max\",\n  \"clear_thinking\": false,\n  \"max_tokens\": 64,\n  \"stream\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "deepseek/deepseek-flash /v1/chat/completions streaming preserves explicit thinking enabled and reasoning_effort max - deepseek-reasoning-controls",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('deepseek explicit reasoning: streaming returns 200', function () {",
+                  "  pm.expect(pm.response.code, 'failed: ' + pm.response.text()).to.equal(200);",
+                  "});",
+                  "if (pm.response.code !== 200) { return; }",
+                  "var txt = pm.response.text() || '';",
+                  "var rr = null;",
+                  "txt.split(String.fromCharCode(10)).forEach(function (line) {",
+                  "  line = line.trim();",
+                  "  if (line.indexOf('data:') !== 0) { return; }",
+                  "  var payload = line.slice(5).trim();",
+                  "  if (!payload || payload === '[DONE]') { return; }",
+                  "  try {",
+                  "    var evt = JSON.parse(payload);",
+                  "    var candidate = evt && evt.extra_fields && evt.extra_fields.raw_request;",
+                  "    if (typeof candidate === 'string') { try { candidate = JSON.parse(candidate); } catch (e) { candidate = null; } }",
+                  "    if (candidate) { rr = candidate; }",
+                  "  } catch (e) {}",
+                  "});",
+                  "var wire = JSON.stringify(rr || null).slice(0, 800);",
+                  "pm.test('deepseek explicit reasoning: raw_request captured in stream', function () {",
+                  "  pm.expect(rr, 'raw_request missing from every SSE frame: ' + txt.slice(-1000)).to.be.an('object');",
+                  "});",
+                  "pm.test('deepseek explicit reasoning: explicit thinking survives on stream', function () {",
+                  "  pm.expect(rr && rr.thinking && rr.thinking.type, 'thinking.type was rewritten or dropped: ' + wire).to.eql('enabled');",
+                  "});",
+                  "pm.test('deepseek explicit reasoning: max effort survives on stream', function () {",
+                  "  pm.expect(rr && rr.reasoning_effort, 'reasoning_effort was rewritten or dropped: ' + wire).to.eql('max');",
+                  "});",
+                  "pm.test('deepseek explicit reasoning: unknown passthrough key survives on stream', function () {",
+                  "  pm.expect(rr && rr.clear_thinking, 'clear_thinking was rewritten or dropped: ' + wire).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-bf-passthrough-extra-params",
+                "value": "true"
+              },
+              {
+                "key": "x-bf-send-back-raw-request",
+                "value": "true"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"deepseek/deepseek-flash\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Reply with the single word OK.\"\n    }\n  ],\n  \"thinking\": {\n    \"type\": \"enabled\"\n  },\n  \"reasoning_effort\": \"max\",\n  \"clear_thinking\": false,\n  \"max_tokens\": 64,\n  \"stream\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "[EXPECT-4XX] deepseek/deepseek-flash /v1/chat/completions explicit thinking enabled with forced tool_choice returns a caller-visible 4xx - deepseek-reasoning-controls",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('deepseek explicit reasoning: forced-tool conflict is caller-visible 4xx', function () {",
+                  "  pm.expect(pm.response.code, 'failed: ' + pm.response.text()).to.be.at.least(400);",
+                  "  pm.expect(pm.response.code, 'failed: ' + pm.response.text()).to.be.below(500);",
+                  "});",
+                  "var text = (pm.response.text() || '').toLowerCase();",
+                  "pm.test('deepseek explicit reasoning: forced-tool conflict reached the thinking/tool-choice path', function () {",
+                  "  pm.expect(text.indexOf('no_key_supports_model'), 'no-key routing error instead of provider conflict: ' + pm.response.text()).to.equal(-1);",
+                  "  pm.expect(text, 'expected thinking/tool_choice conflict: ' + pm.response.text()).to.include('thinking');",
+                  "  pm.expect(text, 'expected thinking/tool_choice conflict: ' + pm.response.text()).to.include('tool_choice');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-bf-passthrough-extra-params",
+                "value": "true"
+              },
+              {
+                "key": "x-bf-send-back-raw-request",
+                "value": "true"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"deepseek/deepseek-flash\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Call get_weather for Paris.\"\n    }\n  ],\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"get_weather\",\n        \"description\": \"Get the current weather for a city.\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"city\": {\n              \"type\": \"string\"\n            }\n          },\n          \"required\": [\n            \"city\"\n          ]\n        }\n      }\n    }\n  ],\n  \"tool_choice\": \"required\",\n  \"thinking\": {\n    \"type\": \"enabled\"\n  },\n  \"reasoning_effort\": \"max\",\n  \"clear_thinking\": false,\n  \"max_tokens\": 64\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            }
+          }
+        }
+      ]
     }
   ]
 }
